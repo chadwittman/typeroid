@@ -53,6 +53,8 @@ The first run needs macOS permissions:
 
 Set your OpenAI API key from the menu-bar item before using `//`. The key is stored in your macOS Keychain. You can also change the trigger from the menu; `//` is the default.
 
+Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
+
 To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list.
 
 ## Current Replacement Strategy

@@ -63,6 +63,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         pasteAPIKey.target = self
         menu.addItem(pasteAPIKey)
 
+        let testCleanup = NSMenuItem(title: "Test Cleanup API", action: #selector(testCleanupAPI), keyEquivalent: "")
+        testCleanup.target = self
+        menu.addItem(testCleanup)
+
         let trigger = NSMenuItem(title: "Set Trigger... (\(Settings.trigger))", action: #selector(setTrigger), keyEquivalent: "")
         trigger.target = self
         menu.addItem(trigger)
@@ -163,6 +167,26 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         Settings.apiKey = value
         notify("API key imported from clipboard.")
+    }
+
+    @objc private func testCleanupAPI() {
+        guard Settings.apiKey != nil else {
+            notify("Set your OpenAI API key from the TypeRoid menu first.")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                statusItem.button?.title = "TypeRoid..."
+                defer { statusItem.button?.title = isEnabled ? "TypeRoid" : "TypeRoid Off" }
+
+                let sample = "hey john i saw the thing come through looks good but can we move meeting to tmrw im slammed today"
+                let cleaned = try await TextCleaner.clean(sample)
+                notify("API cleanup works:\n\n\(cleaned)")
+            } catch {
+                notify("API cleanup failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     @objc private func setTrigger() {
