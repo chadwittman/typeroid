@@ -13,6 +13,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var monitorStatus = "starting"
     private var keypressCount = 0
     private var lastTriggerDebug = "none"
+    private var statusMenuItem: NSMenuItem?
+    private var debugMenuItem: NSMenuItem?
+    private var countMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -67,14 +70,20 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        let status = NSMenuItem(title: "Monitor: \(monitorStatus)", action: nil, keyEquivalent: "")
-        menu.addItem(status)
+        statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        if let statusMenuItem {
+            menu.addItem(statusMenuItem)
+        }
 
-        let debug = NSMenuItem(title: "Last keys: \(lastTriggerDebug)", action: nil, keyEquivalent: "")
-        menu.addItem(debug)
+        debugMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        if let debugMenuItem {
+            menu.addItem(debugMenuItem)
+        }
 
-        let count = NSMenuItem(title: "Keys seen: \(keypressCount)", action: nil, keyEquivalent: "")
-        menu.addItem(count)
+        countMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        if let countMenuItem {
+            menu.addItem(countMenuItem)
+        }
 
         let testAlert = NSMenuItem(title: "Show Debug Status", action: #selector(showDebugStatus), keyEquivalent: "")
         testAlert.target = self
@@ -96,6 +105,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
+        refreshDebugMenuItems()
     }
 
     private func ensureAccessibilityTrust() {
@@ -205,6 +215,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             lastTriggerDebug = "trigger matched"
             statusItem.button?.title = "TypeRoid!"
         }
+        refreshDebugMenuItems()
+    }
+
+    private func refreshDebugMenuItems() {
+        statusMenuItem?.title = "Monitor: \(monitorStatus)"
+        debugMenuItem?.title = "Last keys: \(lastTriggerDebug)"
+        countMenuItem?.title = "Keys seen: \(keypressCount)"
     }
 
     private func handleTrigger() {
