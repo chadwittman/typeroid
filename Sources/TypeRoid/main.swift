@@ -15,7 +15,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         buildMenu()
         ensureAccessibilityTrust()
 
-        triggerMonitor = TriggerMonitor { [weak self] in
+        triggerMonitor = TriggerMonitor(triggerProvider: { Settings.trigger }) { [weak self] in
             Task { @MainActor in
                 self?.handleTrigger()
             }
@@ -24,7 +24,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func buildMenu() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        }
         statusItem.button?.title = "TypeRoid"
 
         let menu = NSMenu()
@@ -39,6 +41,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let apiKey = NSMenuItem(title: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
         apiKey.target = self
         menu.addItem(apiKey)
+
+        let trigger = NSMenuItem(title: "Set Trigger... (\(Settings.trigger))", action: #selector(setTrigger), keyEquivalent: "")
+        trigger.target = self
+        menu.addItem(trigger)
 
         let undo = NSMenuItem(title: "Undo Last Rewrite", action: #selector(undoLastRewrite), keyEquivalent: "z")
         undo.target = self
@@ -72,7 +78,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     @objc private func setAPIKey() {
         let alert = NSAlert()
         alert.messageText = "OpenAI API Key"
-        alert.informativeText = "Stored locally in UserDefaults for this POC."
+        alert.informativeText = "Stored in your macOS Keychain."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
@@ -86,6 +92,26 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         Settings.apiKey = value.isEmpty ? nil : value
+    }
+
+    @objc private func setTrigger() {
+        let alert = NSAlert()
+        alert.messageText = "Trigger"
+        alert.informativeText = "Type this after messy text to clean and replace it."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.placeholderString = "//"
+        field.stringValue = Settings.trigger
+        alert.accessoryView = field
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        Settings.trigger = value.isEmpty ? "//" : value
+        buildMenu()
     }
 
     @objc private func openAccessibilitySettings() {

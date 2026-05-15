@@ -7,7 +7,7 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 ## POC Scope
 
 - Native Swift macOS menu-bar app.
-- Global `//` trigger.
+- Global trigger, default `//`.
 - Clipboard fallback replacement.
 - OpenAI Responses API cleanup.
 - One mode: fix spelling, grammar, punctuation, capitalization, and light clarity.
@@ -43,7 +43,7 @@ The first run needs macOS permissions:
 5. Enable TypeRoid, Terminal, or the built executable there too if macOS asks.
 6. Relaunch TypeRoid.
 
-Set your OpenAI API key from the menu-bar item before using `//`.
+Set your OpenAI API key from the menu-bar item before using `//`. The key is stored in your macOS Keychain. You can also change the trigger from the menu; `//` is the default.
 
 ## Current Replacement Strategy
 

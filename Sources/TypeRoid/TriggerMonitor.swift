@@ -4,11 +4,13 @@ import Foundation
 
 final class TriggerMonitor {
     private let onTrigger: () -> Void
+    private let triggerProvider: () -> String
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var recentCharacters = ""
 
-    init(onTrigger: @escaping () -> Void) {
+    init(triggerProvider: @escaping () -> String, onTrigger: @escaping () -> Void) {
+        self.triggerProvider = triggerProvider
         self.onTrigger = onTrigger
     }
 
@@ -65,11 +67,11 @@ final class TriggerMonitor {
                 recentCharacters.removeAll()
             } else {
                 recentCharacters.append(character)
-                recentCharacters = String(recentCharacters.suffix(2))
+                recentCharacters = String(recentCharacters.suffix(max(triggerProvider().count, 1)))
             }
         }
 
-        if recentCharacters == "//" {
+        if recentCharacters == triggerProvider() {
             recentCharacters.removeAll()
             onTrigger()
         }
