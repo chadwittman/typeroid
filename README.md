@@ -93,6 +93,7 @@ Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite s
    - `Keys seen`
    - `Last rewrite`
    - `Captured`
+   - `Model`
 
 Use `Copy Debug Status` to copy those fields to the clipboard. They separate keyboard monitoring, trigger detection, text capture, API cleanup, and replacement failures.
 

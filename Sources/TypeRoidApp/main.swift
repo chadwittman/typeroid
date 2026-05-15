@@ -433,6 +433,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         Last rewrite: \(lastRewriteStatus)
         Last captured: \(lastCapturedPreview)
         Trigger: \(Settings.trigger)
+        Model: \(Settings.model)
         Last app: \(lastTypingAppName ?? "unknown")
         Last bundle ID: \(lastTypingBundleID ?? "unknown")
         Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
