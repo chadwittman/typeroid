@@ -38,19 +38,31 @@ public enum ClipboardReplacement {
         let previous = PasteboardSnapshot.capture(from: pasteboard)
 
         // Remove the trigger, then select from the cursor to the beginning of the
-        // current paragraph/message. The Option+Shift+Up fallback works in many
-        // native text fields; Cmd+Shift+Left catches single-line web inputs.
+        // current paragraph/message. Try paragraph selection first; if the focused
+        // app ignores it, collapse back to the cursor and try single-line selection.
         for _ in trigger {
             key(.delete)
         }
-        key(.upArrow, flags: [.maskAlternate, .maskShift])
-        key(.leftArrow, flags: [.maskCommand, .maskShift])
-        key("c", flags: [.maskCommand])
-        try await Task.sleep(for: .milliseconds(120))
 
-        guard let raw = pasteboard.string(forType: .string) else {
+        var raw = try await copiedSelection(
+            pasteboard: pasteboard,
+            select: {
+                key(.upArrow, flags: [.maskAlternate, .maskShift])
+            }
+        )
+        if raw == nil {
+            raw = try await copiedSelection(
+                pasteboard: pasteboard,
+                select: {
+                    key(.rightArrow)
+                    key(.leftArrow, flags: [.maskCommand, .maskShift])
+                }
+            )
+        }
+
+        guard let raw else {
             previous.restore(to: pasteboard)
-            throw ClipboardReplacementError.copyFailed
+            throw ClipboardReplacementError.emptySelection
         }
 
         previous.restore(to: pasteboard)
@@ -60,6 +72,17 @@ public enum ClipboardReplacement {
             throw ClipboardReplacementError.emptySelection
         }
         return CapturedText(text: text)
+    }
+
+    private static func copiedSelection(pasteboard: NSPasteboard, select: () -> Void) async throws -> String? {
+        pasteboard.clearContents()
+        select()
+        key("c", flags: [.maskCommand])
+        try await Task.sleep(for: .milliseconds(120))
+
+        guard let raw = pasteboard.string(forType: .string) else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : raw
     }
 
     public static func replaceCurrentSelection(with text: String) {
@@ -115,6 +138,7 @@ public enum ClipboardReplacement {
 private enum SpecialKey: CGKeyCode {
     case delete = 0x33
     case leftArrow = 0x7B
+    case rightArrow = 0x7C
     case upArrow = 0x7E
 }
 
