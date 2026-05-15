@@ -54,6 +54,14 @@ The first run needs macOS permissions:
 5. Enable TypeRoid, Terminal, or the built executable there too if macOS asks.
 6. Relaunch TypeRoid.
 
+If the debug status shows `Monitor: blocked` or `Accessibility trusted: no`, run:
+
+```bash
+./scripts/reset-permissions.sh
+```
+
+Then remove/re-add `/Users/chaztyler/TypeRoid/build/TypeRoid.app` in both Accessibility and Input Monitoring before relaunching.
+
 Set your OpenAI API key from the menu-bar item before using `//`. The key is stored in your macOS Keychain. You can also change the trigger from the menu; `//` is the default.
 
 Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
