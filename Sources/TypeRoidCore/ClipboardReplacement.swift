@@ -21,16 +21,29 @@ public struct CapturedText: Sendable {
 }
 
 public enum ClipboardReplacement {
-    public static func captureCurrentLineBeforeTrigger(trigger: String) async throws -> CapturedText {
+    public static func textBeforeTrigger(from raw: String, trigger: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasSuffix(trigger) else { return trimmed }
+        return String(trimmed.dropLast(trigger.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func currentMessage(from raw: String) -> String {
+        let normalized = raw.replacingOccurrences(of: "\r\n", with: "\n")
+        let paragraphs = normalized.components(separatedBy: "\n\n")
+        return (paragraphs.last ?? normalized).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func captureCurrentMessageBeforeTrigger(trigger: String) async throws -> CapturedText {
         let pasteboard = NSPasteboard.general
         let previous = PasteboardSnapshot.capture(from: pasteboard)
 
         // Remove the trigger, then select from the cursor to the beginning of the
-        // current line/message. This is the POC fallback that works in many text
-        // fields even when Accessibility text ranges are not exposed.
+        // current paragraph/message. The Option+Shift+Up fallback works in many
+        // native text fields; Cmd+Shift+Left catches single-line web inputs.
         for _ in trigger {
             key(.delete)
         }
+        key(.upArrow, flags: [.maskAlternate, .maskShift])
         key(.leftArrow, flags: [.maskCommand, .maskShift])
         key("c", flags: [.maskCommand])
         try await Task.sleep(for: .milliseconds(120))
@@ -42,7 +55,7 @@ public enum ClipboardReplacement {
 
         previous.restore(to: pasteboard)
 
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = currentMessage(from: textBeforeTrigger(from: raw, trigger: trigger))
         guard !text.isEmpty else {
             throw ClipboardReplacementError.emptySelection
         }
@@ -102,6 +115,7 @@ public enum ClipboardReplacement {
 private enum SpecialKey: CGKeyCode {
     case delete = 0x33
     case leftArrow = 0x7B
+    case upArrow = 0x7E
 }
 
 private struct PasteboardSnapshot {

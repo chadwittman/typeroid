@@ -59,7 +59,7 @@ The POC uses a clipboard fallback:
 
 1. Detect `//`.
 2. Delete the trigger.
-3. Select from cursor to the beginning of the current line with `Cmd+Shift+Left`.
+3. Select from cursor to the beginning of the current paragraph/message with `Option+Shift+Up`, then fall back through `Cmd+Shift+Left` for single-line inputs.
 4. Copy.
 5. Clean via API.
 6. Paste the replacement.

@@ -145,7 +145,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 let trigger = Settings.trigger
                 try await Task.sleep(for: .milliseconds(80))
-                let captured = try await ClipboardReplacement.captureCurrentLineBeforeTrigger(trigger: trigger)
+                let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
                 let cleaned = try await TextCleaner.clean(captured.text)
 
                 guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
