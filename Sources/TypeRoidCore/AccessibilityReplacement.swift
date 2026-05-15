@@ -46,6 +46,26 @@ public enum AccessibilityReplacement {
         return isSecureTextEntry(element)
     }
 
+    public static func focusedElementLooksLikeBrowserAddressBar(bundleID: String?) -> Bool {
+        guard let bundleID, Settings.browserBundleIDs.contains(bundleID),
+              let element = try? focusedElement()
+        else { return false }
+
+        let metadata = focusedElementMetadata(element)
+            .map { $0.lowercased() }
+            .joined(separator: " ")
+
+        let blockedPhrases = [
+            "address and search",
+            "address bar",
+            "location bar",
+            "smart search",
+            "omnibox",
+            "url"
+        ]
+        return blockedPhrases.contains { metadata.contains($0) }
+    }
+
     public static func captureCurrentMessageBeforeTrigger(trigger: String) throws -> AccessibilityCapturedText {
         let element = try focusedElement()
         guard !isSecureTextEntry(element) else {
@@ -103,6 +123,23 @@ public enum AccessibilityReplacement {
         }
 
         return false
+    }
+
+    private static func focusedElementMetadata(_ element: AXUIElement) -> [String] {
+        [
+            kAXRoleAttribute,
+            kAXSubroleAttribute,
+            kAXRoleDescriptionAttribute,
+            kAXTitleAttribute,
+            kAXDescriptionAttribute,
+            kAXHelpAttribute
+        ].compactMap { attribute in
+            var value: AnyObject?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+                return nil
+            }
+            return value as? String
+        }
     }
 
     public static func replaceCapturedText(_ captured: AccessibilityCapturedText, with replacement: String) throws {

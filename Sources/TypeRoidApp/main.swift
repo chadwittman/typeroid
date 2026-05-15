@@ -378,6 +378,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             notify("TypeRoid will not run in secure text fields.")
             return
         }
+        guard !AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) else {
+            setRewriteStatus("blocked browser address bar")
+            notify("TypeRoid will not run in browser address bars.")
+            return
+        }
         guard Settings.apiKey != nil else {
             setRewriteStatus("missing API key")
             notify("Set your OpenAI API key from the TypeRoid menu.")

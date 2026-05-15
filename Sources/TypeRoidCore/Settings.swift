@@ -14,6 +14,13 @@ public enum Settings {
         "com.googlecode.iterm2",
         "dev.warp.Warp-Stable"
     ]
+    public static let browserBundleIDs: Set<String> = [
+        "com.apple.Safari",
+        "com.google.Chrome",
+        "com.microsoft.edgemac",
+        "org.mozilla.firefox",
+        "company.thebrowser.Browser"
+    ]
 
     public static var apiKey: String? {
         get {

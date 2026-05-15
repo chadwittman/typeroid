@@ -82,6 +82,7 @@ To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and ch
 Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
 
 TypeRoid blocks secure text fields and password-style controls.
+TypeRoid also blocks likely browser address/search bars while allowing normal page text fields.
 
 TypeRoid sends only the triggered message to the configured OpenAI API endpoint for cleanup. The API key is stored in macOS Keychain, and copied diagnostics do not include captured message content.
 

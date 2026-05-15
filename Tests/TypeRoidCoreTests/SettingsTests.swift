@@ -7,6 +7,11 @@ struct SettingsTests {
         #expect(Settings.defaultModel == "gpt-4.1-nano")
     }
 
+    @Test func knownBrowsersAreTrackedForAddressBarSafety() {
+        #expect(Settings.browserBundleIDs.contains("com.google.Chrome"))
+        #expect(Settings.browserBundleIDs.contains("com.apple.Safari"))
+    }
+
     @Test func opensMenuAfterRewriteByDefault() {
         let previous = Settings.openMenuAfterRewrite
         defer { Settings.openMenuAfterRewrite = previous }
