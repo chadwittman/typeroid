@@ -40,6 +40,14 @@ chmod +x scripts/build-app.sh
 open build/TypeRoid.app
 ```
 
+For day-to-day development, install and launch from a stable app path:
+
+```bash
+./scripts/install-dev-app.sh
+```
+
+Then grant permissions to `/Users/chaztyler/Applications/TypeRoid.app`. This reduces macOS permission churn compared with launching directly from `build/`.
+
 ## Run
 
 ```bash
