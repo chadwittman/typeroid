@@ -4,6 +4,7 @@ public enum Settings {
     private static let apiKeyKey = "openai_api_key"
     private static let modelKey = "openai_model"
     private static let triggerKey = "trigger"
+    private static let excludedBundleIDsKey = "excluded_bundle_ids"
 
     public static var apiKey: String? {
         get {
@@ -26,5 +27,30 @@ public enum Settings {
         set {
             UserDefaults.standard.set(newValue.isEmpty ? "//" : newValue, forKey: triggerKey)
         }
+    }
+
+    public static var excludedBundleIDs: Set<String> {
+        get {
+            Set(UserDefaults.standard.stringArray(forKey: excludedBundleIDsKey) ?? [])
+        }
+        set {
+            UserDefaults.standard.set(Array(newValue).sorted(), forKey: excludedBundleIDsKey)
+        }
+    }
+
+    public static func isExcluded(bundleID: String?) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        return excludedBundleIDs.contains(bundleID)
+    }
+
+    public static func setExcluded(_ isExcluded: Bool, bundleID: String) {
+        guard !bundleID.isEmpty else { return }
+        var ids = excludedBundleIDs
+        if isExcluded {
+            ids.insert(bundleID)
+        } else {
+            ids.remove(bundleID)
+        }
+        excludedBundleIDs = ids
     }
 }

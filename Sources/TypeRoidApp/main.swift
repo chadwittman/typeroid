@@ -13,9 +13,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var monitorStatus = "starting"
     private var keypressCount = 0
     private var lastTriggerDebug = "none"
+    private var lastTypingAppName: String?
+    private var lastTypingBundleID: String?
     private var statusMenuItem: NSMenuItem?
     private var debugMenuItem: NSMenuItem?
     private var countMenuItem: NSMenuItem?
+    private var exclusionMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -67,6 +70,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let undo = NSMenuItem(title: "Undo Last Rewrite", action: #selector(undoLastRewrite), keyEquivalent: "z")
         undo.target = self
         menu.addItem(undo)
+
+        exclusionMenuItem = NSMenuItem(title: "", action: #selector(toggleLastTypingAppExclusion), keyEquivalent: "")
+        exclusionMenuItem?.target = self
+        if let exclusionMenuItem {
+            menu.addItem(exclusionMenuItem)
+        }
+
+        let clearExclusions = NSMenuItem(title: "Clear App Exclusions", action: #selector(clearAppExclusions), keyEquivalent: "")
+        clearExclusions.target = self
+        menu.addItem(clearExclusions)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -198,6 +211,26 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         lastReplacement = nil
     }
 
+    @objc private func toggleLastTypingAppExclusion() {
+        guard let bundleID = lastTypingBundleID else {
+            notify("Type somewhere first, then open this menu to exclude that app.")
+            return
+        }
+
+        let shouldExclude = !Settings.isExcluded(bundleID: bundleID)
+        Settings.setExcluded(shouldExclude, bundleID: bundleID)
+        refreshDebugMenuItems()
+
+        let appName = lastTypingAppName ?? bundleID
+        notify(shouldExclude ? "TypeRoid disabled in \(appName)." : "TypeRoid enabled in \(appName).")
+    }
+
+    @objc private func clearAppExclusions() {
+        Settings.excludedBundleIDs = []
+        refreshDebugMenuItems()
+        notify("App exclusions cleared.")
+    }
+
     private func handleDebugEvent(_ event: TriggerMonitorDebugEvent) {
         switch event {
         case .tapStarted:
@@ -210,6 +243,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .key(let keys):
             keypressCount += 1
             lastTriggerDebug = keys.isEmpty ? "empty" : keys
+            updateLastTypingApplication()
             statusItem.button?.title = isEnabled ? "TypeRoid" : "TypeRoid Off"
         case .triggerMatched:
             lastTriggerDebug = "trigger matched"
@@ -222,10 +256,31 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         statusMenuItem?.title = "Monitor: \(monitorStatus)"
         debugMenuItem?.title = "Last keys: \(lastTriggerDebug)"
         countMenuItem?.title = "Keys seen: \(keypressCount)"
+        if let bundleID = lastTypingBundleID {
+            let appName = lastTypingAppName ?? bundleID
+            let title = Settings.isExcluded(bundleID: bundleID) ? "Enable in \(appName)" : "Exclude \(appName)"
+            exclusionMenuItem?.title = title
+            exclusionMenuItem?.isEnabled = true
+        } else {
+            exclusionMenuItem?.title = "Exclude Current App"
+            exclusionMenuItem?.isEnabled = false
+        }
+    }
+
+    private func updateLastTypingApplication() {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        lastTypingAppName = app.localizedName
+        lastTypingBundleID = app.bundleIdentifier
     }
 
     private func handleTrigger() {
         guard isEnabled else { return }
+        updateLastTypingApplication()
+        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
+            statusItem.button?.title = "TypeRoid Excluded"
+            return
+        }
         guard AXIsProcessTrusted() else {
             notify("TypeRoid needs Accessibility permission.")
             ensureAccessibilityTrust()
