@@ -21,14 +21,16 @@ struct CapturedText {
 }
 
 enum ClipboardReplacement {
-    static func captureCurrentLineBeforeTrigger() async throws -> CapturedText {
+    static func captureCurrentLineBeforeTrigger(trigger: String) async throws -> CapturedText {
         let pasteboard = NSPasteboard.general
         let previous = PasteboardSnapshot.capture(from: pasteboard)
 
         // Remove the trigger, then select from the cursor to the beginning of the
         // current line/message. This is the POC fallback that works in many text
         // fields even when Accessibility text ranges are not exposed.
-        key(.delete)
+        for _ in trigger {
+            key(.delete)
+        }
         key(.leftArrow, flags: [.maskCommand, .maskShift])
         key("c", flags: [.maskCommand])
         try await Task.sleep(for: .milliseconds(120))

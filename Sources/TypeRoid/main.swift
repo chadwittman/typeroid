@@ -142,8 +142,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 statusItem.button?.title = "TypeRoid..."
                 defer { statusItem.button?.title = isEnabled ? "TypeRoid" : "TypeRoid Off" }
 
+                let trigger = Settings.trigger
                 try await Task.sleep(for: .milliseconds(80))
-                let captured = try await ClipboardReplacement.captureCurrentLineBeforeTrigger()
+                let captured = try await ClipboardReplacement.captureCurrentLineBeforeTrigger(trigger: trigger)
                 let cleaned = try await TextCleaner.clean(captured.text)
 
                 guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
