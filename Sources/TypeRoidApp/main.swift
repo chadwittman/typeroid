@@ -247,7 +247,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     @objc private func undoLastRewrite() {
         guard let record = lastReplacement else { return }
-        ClipboardReplacement.replaceCurrentSelection(with: record.original)
+        if let accessibilityCaptured = record.accessibilityCaptured {
+            try? AccessibilityReplacement.replaceCapturedText(accessibilityCaptured, with: record.original)
+        } else {
+            ClipboardReplacement.replaceCurrentSelection(with: record.original)
+        }
         lastReplacement = nil
     }
 
@@ -344,6 +348,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 let trigger = Settings.trigger
                 try await Task.sleep(for: .milliseconds(80))
+                if try await handleTriggerWithAccessibility(trigger: trigger) {
+                    return
+                }
+
                 setRewriteStatus("capturing")
                 let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
                 lastCapturedPreview = preview(captured.text)
@@ -358,12 +366,46 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 setRewriteStatus("replacing")
                 ClipboardReplacement.replaceCurrentSelection(with: cleaned)
-                lastReplacement = ReplacementRecord(original: captured.text, replacement: cleaned)
+                lastReplacement = ReplacementRecord(
+                    original: captured.text,
+                    replacement: cleaned,
+                    accessibilityCaptured: nil
+                )
                 setRewriteStatus("replaced")
             } catch {
                 setRewriteStatus("failed: \(error.localizedDescription)")
                 notify("TypeRoid failed: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func handleTriggerWithAccessibility(trigger: String) async throws -> Bool {
+        do {
+            setRewriteStatus("capturing via accessibility")
+            let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+            lastCapturedPreview = preview(captured.text)
+
+            setRewriteStatus("cleaning")
+            let cleaned = try await TextCleaner.clean(captured.text)
+
+            guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                setRewriteStatus("unchanged")
+                try AccessibilityReplacement.replaceCapturedText(captured, with: captured.text)
+                return true
+            }
+
+            setRewriteStatus("replacing via accessibility")
+            try AccessibilityReplacement.replaceCapturedText(captured, with: cleaned)
+            lastReplacement = ReplacementRecord(
+                original: captured.text,
+                replacement: cleaned,
+                accessibilityCaptured: captured
+            )
+            setRewriteStatus("replaced")
+            return true
+        } catch let error as AccessibilityReplacementError {
+            setRewriteStatus("accessibility fallback: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -397,6 +439,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 struct ReplacementRecord {
     let original: String
     let replacement: String
+    let accessibilityCaptured: AccessibilityCapturedText?
 }
 
 let app = NSApplication.shared

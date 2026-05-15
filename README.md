@@ -8,7 +8,7 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 
 - Native Swift macOS menu-bar app.
 - Global trigger, default `//`.
-- Clipboard fallback replacement.
+- Accessibility-based replacement first, with clipboard fallback for apps that do not expose editable text.
 - OpenAI Responses API cleanup.
 - One mode: fix spelling, grammar, punctuation, capitalization, and light clarity.
 - No preview.
@@ -29,7 +29,7 @@ swift build
 swift test
 ```
 
-The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, response parsing, trigger stripping, current-message extraction, and app exclusion settings.
+The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, response parsing, trigger stripping, current-message extraction, Accessibility replacement planning, and app exclusion settings.
 
 To build a menu-bar `.app` bundle:
 
@@ -87,14 +87,21 @@ Those fields separate keyboard monitoring, trigger detection, text capture, API 
 
 ## Current Replacement Strategy
 
-The POC uses a clipboard fallback:
+The POC uses Accessibility replacement first:
 
 1. Detect `//`.
-2. Delete the trigger.
-3. Select from cursor to the beginning of the current paragraph/message with `Option+Shift+Up`, then fall back through `Cmd+Shift+Left` for single-line inputs.
-4. Copy.
-5. Clean via API.
-6. Paste the replacement.
+2. Read the focused text field through macOS Accessibility.
+3. Find the current message before the last `//`.
+4. Clean via API.
+5. Replace that message and the trigger in-place.
+
+If the focused app does not expose editable text through Accessibility, TypeRoid falls back to clipboard replacement:
+
+1. Delete the trigger.
+2. Select from cursor to the beginning of the current paragraph/message with `Option+Shift+Up`, then fall back through `Cmd+Shift+Left` for single-line inputs.
+3. Copy.
+4. Clean via API.
+5. Paste the replacement.
 
 That is intentionally simple and works best in plain text fields. App-specific hardening should come next for Slack, Chrome, Mail, Messages, and Notes.
 
