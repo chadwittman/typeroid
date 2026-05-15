@@ -13,6 +13,9 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 - One mode: fix spelling, grammar, punctuation, capitalization, and light clarity.
 - No preview.
 - Undo last replacement from the menu bar.
+- API self-test from the menu bar.
+- Per-app exclusions.
+- Rewrite pipeline diagnostics for capture/API/replacement debugging.
 
 ## Build
 
@@ -26,7 +29,7 @@ swift build
 swift test
 ```
 
-The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, and response parsing.
+The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, response parsing, trigger stripping, current-message extraction, and app exclusion settings.
 
 To build a menu-bar `.app` bundle:
 
@@ -56,6 +59,31 @@ Set your OpenAI API key from the menu-bar item before using `//`. The key is sto
 Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
 
 To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list.
+
+## Smoke Test
+
+1. Relaunch the signed app bundle:
+
+   ```bash
+   pkill TypeRoid || true
+   open ~/TypeRoid/build/TypeRoid.app
+   ```
+
+2. Choose `Test Cleanup API` from the TypeRoid menu. This verifies the API key, network call, model, and cleanup prompt.
+3. In Notes, type:
+
+   ```text
+   hey john i saw the thing come through looks good but can we move meeting to tmrw im slammed today //
+   ```
+
+4. If it does not replace correctly, open the TypeRoid menu and read:
+   - `Monitor`
+   - `Last keys`
+   - `Keys seen`
+   - `Last rewrite`
+   - `Captured`
+
+Those fields separate keyboard monitoring, trigger detection, text capture, API cleanup, and replacement failures.
 
 ## Current Replacement Strategy
 
