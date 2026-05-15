@@ -13,11 +13,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var monitorStatus = "starting"
     private var keypressCount = 0
     private var lastTriggerDebug = "none"
+    private var lastRewriteStatus = "none"
+    private var lastCapturedPreview = "none"
     private var lastTypingAppName: String?
     private var lastTypingBundleID: String?
     private var statusMenuItem: NSMenuItem?
     private var debugMenuItem: NSMenuItem?
     private var countMenuItem: NSMenuItem?
+    private var rewriteStatusMenuItem: NSMenuItem?
+    private var capturedPreviewMenuItem: NSMenuItem?
     private var exclusionMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -100,6 +104,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         countMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         if let countMenuItem {
             menu.addItem(countMenuItem)
+        }
+
+        rewriteStatusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        if let rewriteStatusMenuItem {
+            menu.addItem(rewriteStatusMenuItem)
+        }
+
+        capturedPreviewMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        if let capturedPreviewMenuItem {
+            menu.addItem(capturedPreviewMenuItem)
         }
 
         let testAlert = NSMenuItem(title: "Show Debug Status", action: #selector(showDebugStatus), keyEquivalent: "")
@@ -224,6 +238,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         Monitor: \(monitorStatus)
         Keys seen: \(keypressCount)
         Last keys: \(lastTriggerDebug)
+        Last rewrite: \(lastRewriteStatus)
+        Last captured: \(lastCapturedPreview)
         Trigger: \(Settings.trigger)
         Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
         """)
@@ -280,6 +296,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         statusMenuItem?.title = "Monitor: \(monitorStatus)"
         debugMenuItem?.title = "Last keys: \(lastTriggerDebug)"
         countMenuItem?.title = "Keys seen: \(keypressCount)"
+        rewriteStatusMenuItem?.title = "Last rewrite: \(lastRewriteStatus)"
+        capturedPreviewMenuItem?.title = "Captured: \(lastCapturedPreview)"
         if let bundleID = lastTypingBundleID {
             let appName = lastTypingAppName ?? bundleID
             let title = Settings.isExcluded(bundleID: bundleID) ? "Enable in \(appName)" : "Exclude \(appName)"
@@ -300,17 +318,21 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private func handleTrigger() {
         guard isEnabled else { return }
+        setRewriteStatus("triggered")
         updateLastTypingApplication()
         guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
+            setRewriteStatus("excluded app")
             statusItem.button?.title = "TypeRoid Excluded"
             return
         }
         guard AXIsProcessTrusted() else {
+            setRewriteStatus("needs accessibility")
             notify("TypeRoid needs Accessibility permission.")
             ensureAccessibilityTrust()
             return
         }
         guard Settings.apiKey != nil else {
+            setRewriteStatus("missing API key")
             notify("Set your OpenAI API key from the TypeRoid menu.")
             return
         }
@@ -322,20 +344,40 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 let trigger = Settings.trigger
                 try await Task.sleep(for: .milliseconds(80))
+                setRewriteStatus("capturing")
                 let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+                lastCapturedPreview = preview(captured.text)
+                setRewriteStatus("cleaning")
                 let cleaned = try await TextCleaner.clean(captured.text)
 
                 guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                    setRewriteStatus("unchanged")
                     ClipboardReplacement.replaceCurrentSelection(with: captured.text)
                     return
                 }
 
+                setRewriteStatus("replacing")
                 ClipboardReplacement.replaceCurrentSelection(with: cleaned)
                 lastReplacement = ReplacementRecord(original: captured.text, replacement: cleaned)
+                setRewriteStatus("replaced")
             } catch {
+                setRewriteStatus("failed: \(error.localizedDescription)")
                 notify("TypeRoid failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    private func setRewriteStatus(_ status: String) {
+        lastRewriteStatus = preview(status)
+        refreshDebugMenuItems()
+    }
+
+    private func preview(_ text: String) -> String {
+        let singleLine = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard singleLine.count > 48 else { return singleLine.isEmpty ? "empty" : singleLine }
+        return "\(singleLine.prefix(45))..."
     }
 
     private func notify(_ message: String) {
