@@ -86,6 +86,8 @@ TypeRoid also blocks likely browser address/search bars while allowing normal pa
 
 TypeRoid sends only the triggered message to the configured OpenAI API endpoint for cleanup. The API key is stored in macOS Keychain, and copied diagnostics do not include captured message content.
 
+See [SECURITY.md](SECURITY.md) for the current safety posture and production hardening checklist.
+
 ## Smoke Test
 
 1. Relaunch the signed app bundle:
