@@ -43,6 +43,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         apiKey.target = self
         menu.addItem(apiKey)
 
+        let pasteAPIKey = NSMenuItem(title: "Import API Key from Clipboard", action: #selector(importAPIKeyFromClipboard), keyEquivalent: "")
+        pasteAPIKey.target = self
+        menu.addItem(pasteAPIKey)
+
         let trigger = NSMenuItem(title: "Set Trigger... (\(Settings.trigger))", action: #selector(setTrigger), keyEquivalent: "")
         trigger.target = self
         menu.addItem(trigger)
@@ -83,16 +87,30 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 420, height: 24))
         field.placeholderString = "sk-..."
         field.stringValue = Settings.apiKey ?? ""
         alert.accessoryView = field
 
         NSApp.activate(ignoringOtherApps: true)
+        alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         Settings.apiKey = value.isEmpty ? nil : value
+    }
+
+    @objc private func importAPIKeyFromClipboard() {
+        guard let value = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            notify("Clipboard does not contain an API key.")
+            return
+        }
+
+        Settings.apiKey = value
+        notify("API key imported from clipboard.")
     }
 
     @objc private func setTrigger() {
