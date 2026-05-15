@@ -65,4 +65,8 @@ public enum Settings {
         }
         excludedBundleIDs = ids
     }
+
+    public static func resetExcludedBundleIDsToDefaults() {
+        excludedBundleIDs = defaultExcludedBundleIDs
+    }
 }

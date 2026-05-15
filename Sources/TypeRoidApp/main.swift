@@ -273,9 +273,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func clearAppExclusions() {
-        Settings.excludedBundleIDs = []
+        Settings.resetExcludedBundleIDsToDefaults()
         refreshDebugMenuItems()
-        notify("App exclusions cleared.")
+        notify("App exclusions reset to defaults.")
     }
 
     private func handleDebugEvent(_ event: TriggerMonitorDebugEvent) {

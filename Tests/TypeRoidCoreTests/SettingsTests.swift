@@ -31,4 +31,18 @@ struct SettingsTests {
         #expect(Settings.excludedBundleIDs.isEmpty)
         #expect(Settings.isExcluded(bundleID: nil) == false)
     }
+
+    @Test func resetExcludedBundleIDsRestoresSafetyDefaults() {
+        let previous = Settings.excludedBundleIDs
+        defer { Settings.excludedBundleIDs = previous }
+
+        Settings.excludedBundleIDs = []
+        #expect(Settings.isExcluded(bundleID: "com.apple.Terminal") == false)
+
+        Settings.resetExcludedBundleIDsToDefaults()
+
+        #expect(Settings.isExcluded(bundleID: "com.apple.Terminal") == true)
+        #expect(Settings.isExcluded(bundleID: "com.googlecode.iterm2") == true)
+        #expect(Settings.isExcluded(bundleID: "dev.warp.Warp-Stable") == true)
+    }
 }

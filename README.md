@@ -67,7 +67,7 @@ Set your OpenAI API key from the menu-bar item before using `//`. The key is sto
 
 Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
 
-To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list.
+To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list to the safety defaults.
 
 Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
 
