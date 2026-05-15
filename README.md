@@ -18,6 +18,7 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 - Per-app exclusions.
 - Rewrite pipeline diagnostics for capture/API/replacement debugging.
 - Optional menu opening after `//` so users can see what happened.
+- Diagnostics show capture length, not captured text.
 
 ## Build
 
@@ -81,6 +82,8 @@ To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and ch
 Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
 
 TypeRoid blocks secure text fields and password-style controls.
+
+TypeRoid sends only the triggered message to the configured OpenAI API endpoint for cleanup. The API key is stored in macOS Keychain, and copied diagnostics do not include captured message content.
 
 ## Smoke Test
 

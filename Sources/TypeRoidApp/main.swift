@@ -14,7 +14,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var keypressCount = 0
     private var lastTriggerDebug = "none"
     private var lastRewriteStatus = "none"
-    private var lastCapturedPreview = "none"
+    private var lastCapturedSummary = "none"
     private var lastTypingAppName: String?
     private var lastTypingBundleID: String?
     private var statusMenuItem: NSMenuItem?
@@ -339,7 +339,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         debugMenuItem?.title = "Last keys: \(lastTriggerDebug)"
         countMenuItem?.title = "Keys seen: \(keypressCount)"
         rewriteStatusMenuItem?.title = "Last rewrite: \(lastRewriteStatus)"
-        capturedPreviewMenuItem?.title = "Captured: \(lastCapturedPreview)"
+        capturedPreviewMenuItem?.title = "Captured: \(lastCapturedSummary)"
         if let bundleID = lastTypingBundleID {
             let appName = lastTypingAppName ?? bundleID
             let title = Settings.isExcluded(bundleID: bundleID) ? "Enable in \(appName)" : "Exclude \(appName)"
@@ -397,7 +397,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 setRewriteStatus("capturing")
                 let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
-                lastCapturedPreview = preview(captured.text)
+                lastCapturedSummary = captureSummary(captured.text)
                 setRewriteStatus("cleaning")
                 let cleaned = try await TextCleaner.clean(captured.text)
 
@@ -428,7 +428,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         do {
             setRewriteStatus("capturing via accessibility")
             let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
-            lastCapturedPreview = preview(captured.text)
+            lastCapturedSummary = captureSummary(captured.text)
 
             setRewriteStatus("cleaning")
             let cleaned = try await TextCleaner.clean(captured.text)
@@ -469,13 +469,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         return "\(singleLine.prefix(45))..."
     }
 
+    private func captureSummary(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "empty" }
+        return "\(trimmed.count) chars"
+    }
+
     private func debugStatusText() -> String {
         """
         Monitor: \(monitorStatus)
         Keys seen: \(keypressCount)
         Last keys: \(lastTriggerDebug)
         Last rewrite: \(lastRewriteStatus)
-        Last captured: \(lastCapturedPreview)
+        Last captured: \(lastCapturedSummary)
         Trigger: \(Settings.trigger)
         Model: \(Settings.model)
         Last app: \(lastTypingAppName ?? "unknown")
