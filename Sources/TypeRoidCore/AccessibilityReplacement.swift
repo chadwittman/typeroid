@@ -4,6 +4,7 @@ import Foundation
 public enum AccessibilityReplacementError: LocalizedError, Sendable {
     case missingFocusedElement
     case unsupportedElement
+    case secureTextField
     case triggerNotFound
     case emptyMessage
     case replacementFailed
@@ -14,6 +15,8 @@ public enum AccessibilityReplacementError: LocalizedError, Sendable {
             return "No focused text field was found."
         case .unsupportedElement:
             return "The focused text field does not expose editable text."
+        case .secureTextField:
+            return "TypeRoid will not run in secure text fields."
         case .triggerNotFound:
             return "The trigger was not found in the focused text."
         case .emptyMessage:
@@ -38,19 +41,17 @@ struct AccessibilityReplacementPlan {
 }
 
 public enum AccessibilityReplacement {
+    public static func focusedElementIsSecureTextEntry() -> Bool {
+        guard let element = try? focusedElement() else { return false }
+        return isSecureTextEntry(element)
+    }
+
     public static func captureCurrentMessageBeforeTrigger(trigger: String) throws -> AccessibilityCapturedText {
-        let system = AXUIElementCreateSystemWide()
-        var focusedObject: AnyObject?
-        let focusedResult = AXUIElementCopyAttributeValue(
-            system,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedObject
-        )
-        guard focusedResult == .success, let focusedObject else {
-            throw AccessibilityReplacementError.missingFocusedElement
+        let element = try focusedElement()
+        guard !isSecureTextEntry(element) else {
+            throw AccessibilityReplacementError.secureTextField
         }
 
-        let element = focusedObject as! AXUIElement
         var valueObject: AnyObject?
         let valueResult = AXUIElementCopyAttributeValue(
             element,
@@ -69,6 +70,39 @@ public enum AccessibilityReplacement {
             fullValue: value,
             replaceRange: plan.replaceRange
         )
+    }
+
+    private static func focusedElement() throws -> AXUIElement {
+        let system = AXUIElementCreateSystemWide()
+        var focusedObject: AnyObject?
+        let focusedResult = AXUIElementCopyAttributeValue(
+            system,
+            kAXFocusedUIElementAttribute as CFString,
+            &focusedObject
+        )
+        guard focusedResult == .success, let focusedObject else {
+            throw AccessibilityReplacementError.missingFocusedElement
+        }
+
+        return focusedObject as! AXUIElement
+    }
+
+    private static func isSecureTextEntry(_ element: AXUIElement) -> Bool {
+        var roleObject: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleObject) == .success,
+           let role = roleObject as? String,
+           role.localizedCaseInsensitiveContains("secure") {
+            return true
+        }
+
+        var subroleObject: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subroleObject) == .success,
+           let subrole = subroleObject as? String,
+           subrole.localizedCaseInsensitiveContains("secure") {
+            return true
+        }
+
+        return false
     }
 
     public static func replaceCapturedText(_ captured: AccessibilityCapturedText, with replacement: String) throws {

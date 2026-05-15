@@ -7,6 +7,17 @@ struct SettingsTests {
         #expect(Settings.defaultModel == "gpt-4.1-nano")
     }
 
+    @Test func opensMenuAfterRewriteByDefault() {
+        let previous = Settings.openMenuAfterRewrite
+        defer { Settings.openMenuAfterRewrite = previous }
+
+        Settings.openMenuAfterRewrite = true
+        #expect(Settings.openMenuAfterRewrite == true)
+
+        Settings.openMenuAfterRewrite = false
+        #expect(Settings.openMenuAfterRewrite == false)
+    }
+
     @Test func excludedBundleIDsCanBeToggled() {
         let previous = Settings.excludedBundleIDs
         defer { Settings.excludedBundleIDs = previous }

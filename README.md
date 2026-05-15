@@ -17,6 +17,7 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 - API self-test from the menu bar.
 - Per-app exclusions.
 - Rewrite pipeline diagnostics for capture/API/replacement debugging.
+- Optional menu opening after `//` so users can see what happened.
 
 ## Build
 
@@ -78,6 +79,8 @@ Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt be
 To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list to the safety defaults.
 
 Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
+
+TypeRoid blocks secure text fields and password-style controls.
 
 ## Smoke Test
 

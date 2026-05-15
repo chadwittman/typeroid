@@ -23,6 +23,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var rewriteStatusMenuItem: NSMenuItem?
     private var capturedPreviewMenuItem: NSMenuItem?
     private var exclusionMenuItem: NSMenuItem?
+    private var openMenuAfterRewriteMenuItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -54,10 +55,49 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Type like hell. Send like a pro.", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
-        let toggle = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled(_:)), keyEquivalent: "")
+        let toggle = NSMenuItem(title: "TypeRoid Enabled", action: #selector(toggleEnabled(_:)), keyEquivalent: "")
         toggle.state = isEnabled ? .on : .off
         toggle.target = self
         menu.addItem(toggle)
+
+        let undo = NSMenuItem(title: "Undo Last Rewrite", action: #selector(undoLastRewrite), keyEquivalent: "z")
+        undo.target = self
+        menu.addItem(undo)
+
+        exclusionMenuItem = NSMenuItem(title: "", action: #selector(toggleLastTypingAppExclusion), keyEquivalent: "")
+        exclusionMenuItem?.target = self
+        if let exclusionMenuItem {
+            menu.addItem(exclusionMenuItem)
+        }
+
+        openMenuAfterRewriteMenuItem = NSMenuItem(title: "Open Menu After //", action: #selector(toggleOpenMenuAfterRewrite(_:)), keyEquivalent: "")
+        openMenuAfterRewriteMenuItem?.target = self
+        openMenuAfterRewriteMenuItem?.state = Settings.openMenuAfterRewrite ? .on : .off
+        if let openMenuAfterRewriteMenuItem {
+            menu.addItem(openMenuAfterRewriteMenuItem)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
+        let settings = NSMenuItem(title: "Settings", action: nil, keyEquivalent: "")
+        settings.submenu = buildSettingsMenu()
+        menu.addItem(settings)
+
+        let diagnostics = NSMenuItem(title: "Diagnostics", action: nil, keyEquivalent: "")
+        diagnostics.submenu = buildDiagnosticsMenu()
+        menu.addItem(diagnostics)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let quit = NSMenuItem(title: "Quit TypeRoid", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quit)
+
+        statusItem.menu = menu
+        refreshDebugMenuItems()
+    }
+
+    private func buildSettingsMenu() -> NSMenu {
+        let menu = NSMenu()
 
         let apiKey = NSMenuItem(title: "Set API Key...", action: #selector(setAPIKey), keyEquivalent: "")
         apiKey.target = self
@@ -71,25 +111,31 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         testCleanup.target = self
         menu.addItem(testCleanup)
 
+        menu.addItem(NSMenuItem.separator())
+
         let trigger = NSMenuItem(title: "Set Trigger... (\(Settings.trigger))", action: #selector(setTrigger), keyEquivalent: "")
         trigger.target = self
         menu.addItem(trigger)
 
-        let undo = NSMenuItem(title: "Undo Last Rewrite", action: #selector(undoLastRewrite), keyEquivalent: "z")
-        undo.target = self
-        menu.addItem(undo)
-
-        exclusionMenuItem = NSMenuItem(title: "", action: #selector(toggleLastTypingAppExclusion), keyEquivalent: "")
-        exclusionMenuItem?.target = self
-        if let exclusionMenuItem {
-            menu.addItem(exclusionMenuItem)
-        }
-
-        let clearExclusions = NSMenuItem(title: "Clear App Exclusions", action: #selector(clearAppExclusions), keyEquivalent: "")
+        let clearExclusions = NSMenuItem(title: "Reset App Exclusions", action: #selector(clearAppExclusions), keyEquivalent: "")
         clearExclusions.target = self
         menu.addItem(clearExclusions)
 
         menu.addItem(NSMenuItem.separator())
+
+        let permissions = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
+        permissions.target = self
+        menu.addItem(permissions)
+
+        let inputPermissions = NSMenuItem(title: "Open Input Monitoring Settings", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
+        inputPermissions.target = self
+        menu.addItem(inputPermissions)
+
+        return menu
+    }
+
+    private func buildDiagnosticsMenu() -> NSMenu {
+        let menu = NSMenu()
 
         statusMenuItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         if let statusMenuItem {
@@ -124,23 +170,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         copyDebug.target = self
         menu.addItem(copyDebug)
 
-        menu.addItem(NSMenuItem.separator())
-
-        let permissions = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
-        permissions.target = self
-        menu.addItem(permissions)
-
-        let inputPermissions = NSMenuItem(title: "Open Input Monitoring Settings", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
-        inputPermissions.target = self
-        menu.addItem(inputPermissions)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let quit = NSMenuItem(title: "Quit TypeRoid", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
-
-        statusItem.menu = menu
-        refreshDebugMenuItems()
+        return menu
     }
 
     private func ensureAccessibilityTrust() {
@@ -152,6 +182,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         isEnabled.toggle()
         sender.state = isEnabled ? .on : .off
         statusItem.button?.title = isEnabled ? "TypeRoid" : "TypeRoid Off"
+    }
+
+    @objc private func toggleOpenMenuAfterRewrite(_ sender: NSMenuItem) {
+        Settings.openMenuAfterRewrite.toggle()
+        sender.state = Settings.openMenuAfterRewrite ? .on : .off
     }
 
     @objc private func setAPIKey() {
@@ -338,6 +373,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             ensureAccessibilityTrust()
             return
         }
+        guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
+            setRewriteStatus("blocked secure text field")
+            notify("TypeRoid will not run in secure text fields.")
+            return
+        }
         guard Settings.apiKey != nil else {
             setRewriteStatus("missing API key")
             notify("Set your OpenAI API key from the TypeRoid menu.")
@@ -364,6 +404,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
                     setRewriteStatus("unchanged")
                     ClipboardReplacement.replaceCurrentSelection(with: captured.text)
+                    openMenuAfterRewriteIfNeeded()
                     return
                 }
 
@@ -375,6 +416,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     accessibilityCaptured: nil
                 )
                 setRewriteStatus("replaced")
+                openMenuAfterRewriteIfNeeded()
             } catch {
                 setRewriteStatus("failed: \(error.localizedDescription)")
                 notify("TypeRoid failed: \(error.localizedDescription)")
@@ -394,6 +436,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 setRewriteStatus("unchanged")
                 try AccessibilityReplacement.replaceCapturedText(captured, with: captured.text)
+                openMenuAfterRewriteIfNeeded()
                 return true
             }
 
@@ -405,6 +448,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 accessibilityCaptured: captured
             )
             setRewriteStatus("replaced")
+            openMenuAfterRewriteIfNeeded()
             return true
         } catch let error as AccessibilityReplacementError {
             setRewriteStatus("accessibility fallback: \(error.localizedDescription)")
@@ -438,6 +482,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         Last bundle ID: \(lastTypingBundleID ?? "unknown")
         Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
         """
+    }
+
+    private func openMenuAfterRewriteIfNeeded() {
+        guard Settings.openMenuAfterRewrite else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            statusItem.button?.performClick(nil)
+        }
     }
 
     private func notify(_ message: String) {

@@ -6,6 +6,7 @@ public enum Settings {
     private static let triggerKey = "trigger"
     private static let excludedBundleIDsKey = "excluded_bundle_ids"
     private static let userConfiguredExcludedBundleIDsKey = "user_configured_excluded_bundle_ids"
+    private static let openMenuAfterRewriteKey = "open_menu_after_rewrite"
 
     public static let defaultModel = "gpt-4.1-nano"
     public static let defaultExcludedBundleIDs: Set<String> = [
@@ -34,6 +35,15 @@ public enum Settings {
         }
         set {
             UserDefaults.standard.set(newValue.isEmpty ? "//" : newValue, forKey: triggerKey)
+        }
+    }
+
+    public static var openMenuAfterRewrite: Bool {
+        get {
+            UserDefaults.standard.object(forKey: openMenuAfterRewriteKey) as? Bool ?? true
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: openMenuAfterRewriteKey)
         }
     }
 
