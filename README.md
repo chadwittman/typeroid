@@ -83,7 +83,7 @@ To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and ch
    - `Last rewrite`
    - `Captured`
 
-Those fields separate keyboard monitoring, trigger detection, text capture, API cleanup, and replacement failures.
+Use `Copy Debug Status` to copy those fields to the clipboard. They separate keyboard monitoring, trigger detection, text capture, API cleanup, and replacement failures.
 
 ## Current Replacement Strategy
 

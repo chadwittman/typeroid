@@ -120,6 +120,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         testAlert.target = self
         menu.addItem(testAlert)
 
+        let copyDebug = NSMenuItem(title: "Copy Debug Status", action: #selector(copyDebugStatus), keyEquivalent: "")
+        copyDebug.target = self
+        menu.addItem(copyDebug)
+
         menu.addItem(NSMenuItem.separator())
 
         let permissions = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
@@ -234,15 +238,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showDebugStatus() {
-        notify("""
-        Monitor: \(monitorStatus)
-        Keys seen: \(keypressCount)
-        Last keys: \(lastTriggerDebug)
-        Last rewrite: \(lastRewriteStatus)
-        Last captured: \(lastCapturedPreview)
-        Trigger: \(Settings.trigger)
-        Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
-        """)
+        notify(debugStatusText())
+    }
+
+    @objc private func copyDebugStatus() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(debugStatusText(), forType: .string)
+        notify("Debug status copied.")
     }
 
     @objc private func undoLastRewrite() {
@@ -420,6 +423,20 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard singleLine.count > 48 else { return singleLine.isEmpty ? "empty" : singleLine }
         return "\(singleLine.prefix(45))..."
+    }
+
+    private func debugStatusText() -> String {
+        """
+        Monitor: \(monitorStatus)
+        Keys seen: \(keypressCount)
+        Last keys: \(lastTriggerDebug)
+        Last rewrite: \(lastRewriteStatus)
+        Last captured: \(lastCapturedPreview)
+        Trigger: \(Settings.trigger)
+        Last app: \(lastTypingAppName ?? "unknown")
+        Last bundle ID: \(lastTypingBundleID ?? "unknown")
+        Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
+        """
     }
 
     private func notify(_ message: String) {
