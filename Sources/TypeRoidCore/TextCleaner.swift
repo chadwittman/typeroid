@@ -1,11 +1,11 @@
 import Foundation
 
-enum TextCleanerError: LocalizedError {
+public enum TextCleanerError: LocalizedError, Equatable, Sendable {
     case missingAPIKey
     case invalidResponse
     case apiError(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
             return "Missing OpenAI API key."
@@ -17,8 +17,23 @@ enum TextCleanerError: LocalizedError {
     }
 }
 
-enum TextCleaner {
-    static func clean(_ text: String) async throws -> String {
+public enum TextCleaner {
+    static let systemInstruction = """
+    You are TypeRoid, a restrained cleanup tool.
+
+    Fix spelling, grammar, punctuation, and capitalization.
+    Preserve the writer's voice, wording, bluntness, and intent as much as possible.
+    Do not add ideas.
+    Do not add jargon.
+    Do not make it corporate.
+    Do not make it sound like AI.
+    Do not over-polish.
+    Keep contractions and natural phrasing.
+    If the original is blunt, keep it blunt, just readable.
+    Return only the corrected text.
+    """
+
+    public static func clean(_ text: String) async throws -> String {
         guard let apiKey = Settings.apiKey, !apiKey.isEmpty else {
             throw TextCleanerError.missingAPIKey
         }
@@ -27,29 +42,25 @@ enum TextCleaner {
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(ResponsesRequest(
-            model: Settings.model,
+        request.httpBody = try makeRequestBody(text: text, model: Settings.model)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            let body = String(data: data, encoding: .utf8) ?? "OpenAI API error"
+            throw TextCleanerError.apiError(body)
+        }
+
+        return try parseResponse(data)
+    }
+
+    static func makeRequestBody(text: String, model: String) throws -> Data {
+        try JSONEncoder().encode(ResponsesRequest(
+            model: model,
             input: [
                 ResponsesMessage(
                     role: "system",
                     content: [
-                        ResponsesContent(
-                            type: "input_text",
-                            text: """
-                            You are TypeRoid, a restrained cleanup tool.
-
-                            Fix spelling, grammar, punctuation, and capitalization.
-                            Preserve the writer's voice, wording, bluntness, and intent as much as possible.
-                            Do not add ideas.
-                            Do not add jargon.
-                            Do not make it corporate.
-                            Do not make it sound like AI.
-                            Do not over-polish.
-                            Keep contractions and natural phrasing.
-                            If the original is blunt, keep it blunt, just readable.
-                            Return only the corrected text.
-                            """
-                        )
+                        ResponsesContent(type: "input_text", text: systemInstruction)
                     ]
                 ),
                 ResponsesMessage(
@@ -61,13 +72,9 @@ enum TextCleaner {
             ],
             temperature: 0.1
         ))
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let body = String(data: data, encoding: .utf8) ?? "OpenAI API error"
-            throw TextCleanerError.apiError(body)
-        }
-
+    static func parseResponse(_ data: Data) throws -> String {
         let decoded = try JSONDecoder().decode(ResponsesResponse.self, from: data)
         if let outputText = decoded.outputText?.trimmingCharacters(in: .whitespacesAndNewlines), !outputText.isEmpty {
             return outputText

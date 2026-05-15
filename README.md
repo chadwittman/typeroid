@@ -20,6 +20,14 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 swift build
 ```
 
+## Test
+
+```bash
+swift test
+```
+
+The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, and response parsing.
+
 To build a menu-bar `.app` bundle:
 
 ```bash

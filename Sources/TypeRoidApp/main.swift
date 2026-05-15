@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Carbon
 import Foundation
+import TypeRoidCore
 
 @MainActor
 final class TypeRoidApp: NSObject, NSApplicationDelegate {

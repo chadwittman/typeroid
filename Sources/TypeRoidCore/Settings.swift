@@ -1,11 +1,11 @@
 import Foundation
 
-enum Settings {
+public enum Settings {
     private static let apiKeyKey = "openai_api_key"
     private static let modelKey = "openai_model"
     private static let triggerKey = "trigger"
 
-    static var apiKey: String? {
+    public static var apiKey: String? {
         get {
             KeychainStore.read(account: apiKeyKey)
         }
@@ -14,11 +14,11 @@ enum Settings {
         }
     }
 
-    static var model: String {
+    public static var model: String {
         UserDefaults.standard.string(forKey: modelKey) ?? "gpt-4.1-mini"
     }
 
-    static var trigger: String {
+    public static var trigger: String {
         get {
             let value = UserDefaults.standard.string(forKey: triggerKey) ?? "//"
             return value.isEmpty ? "//" : value

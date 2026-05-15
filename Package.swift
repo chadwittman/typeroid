@@ -10,9 +10,19 @@ let package = Package(
         .executable(name: "TypeRoid", targets: ["TypeRoid"])
     ],
     targets: [
+        .target(
+            name: "TypeRoidCore",
+            path: "Sources/TypeRoidCore"
+        ),
         .executableTarget(
             name: "TypeRoid",
-            path: "Sources/TypeRoid"
+            dependencies: ["TypeRoidCore"],
+            path: "Sources/TypeRoidApp"
+        ),
+        .testTarget(
+            name: "TypeRoidCoreTests",
+            dependencies: ["TypeRoidCore"],
+            path: "Tests/TypeRoidCoreTests"
         )
     ]
 )

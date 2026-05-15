@@ -2,19 +2,19 @@ import AppKit
 import Carbon
 import Foundation
 
-final class TriggerMonitor {
+public final class TriggerMonitor {
     private let onTrigger: () -> Void
     private let triggerProvider: () -> String
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var recentCharacters = ""
 
-    init(triggerProvider: @escaping () -> String, onTrigger: @escaping () -> Void) {
+    public init(triggerProvider: @escaping () -> String, onTrigger: @escaping () -> Void) {
         self.triggerProvider = triggerProvider
         self.onTrigger = onTrigger
     }
 
-    func start() {
+    public func start() {
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
             guard type == .keyDown, let refcon else { return Unmanaged.passUnretained(event) }

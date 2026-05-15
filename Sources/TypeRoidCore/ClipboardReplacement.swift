@@ -2,11 +2,11 @@ import AppKit
 import Carbon
 import Foundation
 
-enum ClipboardReplacementError: LocalizedError {
+public enum ClipboardReplacementError: LocalizedError, Sendable {
     case copyFailed
     case emptySelection
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .copyFailed:
             return "Could not copy the current text."
@@ -16,12 +16,12 @@ enum ClipboardReplacementError: LocalizedError {
     }
 }
 
-struct CapturedText {
-    let text: String
+public struct CapturedText: Sendable {
+    public let text: String
 }
 
-enum ClipboardReplacement {
-    static func captureCurrentLineBeforeTrigger(trigger: String) async throws -> CapturedText {
+public enum ClipboardReplacement {
+    public static func captureCurrentLineBeforeTrigger(trigger: String) async throws -> CapturedText {
         let pasteboard = NSPasteboard.general
         let previous = PasteboardSnapshot.capture(from: pasteboard)
 
@@ -49,7 +49,7 @@ enum ClipboardReplacement {
         return CapturedText(text: text)
     }
 
-    static func replaceCurrentSelection(with text: String) {
+    public static func replaceCurrentSelection(with text: String) {
         let pasteboard = NSPasteboard.general
         let previous = PasteboardSnapshot.capture(from: pasteboard)
 
