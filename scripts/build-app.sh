@@ -40,8 +40,14 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>TypeRoid uses automation-style keyboard actions to clean and replace text where you type.</string>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>TypeRoid watches for your cleanup trigger so it can fix text when you type it.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>TypeRoid uses Accessibility to select and replace the text you ask it to clean.</string>
 </dict>
 </plist>
 PLIST
+
+codesign --force --deep --sign - "$APP_DIR"
 
 echo "Built $APP_DIR"
