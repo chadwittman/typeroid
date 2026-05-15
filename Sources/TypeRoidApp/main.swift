@@ -10,13 +10,23 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var triggerMonitor: TriggerMonitor?
     private var isEnabled = true
     private var lastReplacement: ReplacementRecord?
+    private var monitorStatus = "starting"
+    private var keypressCount = 0
+    private var lastTriggerDebug = "none"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         buildMenu()
         ensureAccessibilityTrust()
 
-        triggerMonitor = TriggerMonitor(triggerProvider: { Settings.trigger }) { [weak self] in
+        triggerMonitor = TriggerMonitor(
+            triggerProvider: { Settings.trigger },
+            onDebugEvent: { [weak self] event in
+                Task { @MainActor in
+                    self?.handleDebugEvent(event)
+                }
+            }
+        ) { [weak self] in
             Task { @MainActor in
                 self?.handleTrigger()
             }
@@ -57,9 +67,28 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let status = NSMenuItem(title: "Monitor: \(monitorStatus)", action: nil, keyEquivalent: "")
+        menu.addItem(status)
+
+        let debug = NSMenuItem(title: "Last keys: \(lastTriggerDebug)", action: nil, keyEquivalent: "")
+        menu.addItem(debug)
+
+        let count = NSMenuItem(title: "Keys seen: \(keypressCount)", action: nil, keyEquivalent: "")
+        menu.addItem(count)
+
+        let testAlert = NSMenuItem(title: "Show Debug Status", action: #selector(showDebugStatus), keyEquivalent: "")
+        testAlert.target = self
+        menu.addItem(testAlert)
+
+        menu.addItem(NSMenuItem.separator())
+
         let permissions = NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: "")
         permissions.target = self
         menu.addItem(permissions)
+
+        let inputPermissions = NSMenuItem(title: "Open Input Monitoring Settings", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
+        inputPermissions.target = self
+        menu.addItem(inputPermissions)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -138,10 +167,44 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(url)
     }
 
+    @objc private func openInputMonitoringSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func showDebugStatus() {
+        notify("""
+        Monitor: \(monitorStatus)
+        Keys seen: \(keypressCount)
+        Last keys: \(lastTriggerDebug)
+        Trigger: \(Settings.trigger)
+        Accessibility trusted: \(AXIsProcessTrusted() ? "yes" : "no")
+        """)
+    }
+
     @objc private func undoLastRewrite() {
         guard let record = lastReplacement else { return }
         ClipboardReplacement.replaceCurrentSelection(with: record.original)
         lastReplacement = nil
+    }
+
+    private func handleDebugEvent(_ event: TriggerMonitorDebugEvent) {
+        switch event {
+        case .tapStarted:
+            monitorStatus = "active"
+        case .tapCreationFailed:
+            monitorStatus = "blocked"
+            notify("Keyboard monitor could not start. Enable TypeRoid in Input Monitoring, then quit and reopen it.")
+        case .tapReenabled:
+            monitorStatus = "re-enabled"
+        case .key(let keys):
+            keypressCount += 1
+            lastTriggerDebug = keys.isEmpty ? "empty" : keys
+            statusItem.button?.title = isEnabled ? "TypeRoid" : "TypeRoid Off"
+        case .triggerMatched:
+            lastTriggerDebug = "trigger matched"
+            statusItem.button?.title = "TypeRoid!"
+        }
     }
 
     private func handleTrigger() {

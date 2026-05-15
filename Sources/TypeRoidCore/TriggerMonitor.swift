@@ -5,20 +5,43 @@ import Foundation
 public final class TriggerMonitor {
     private let onTrigger: () -> Void
     private let triggerProvider: () -> String
+    private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var recentCharacters = ""
+    private(set) public var isActive = false
+    private(set) public var lastCharacters = ""
+    private(set) public var keypressCount = 0
 
-    public init(triggerProvider: @escaping () -> String, onTrigger: @escaping () -> Void) {
+    public init(
+        triggerProvider: @escaping () -> String,
+        onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
+        onTrigger: @escaping () -> Void
+    ) {
         self.triggerProvider = triggerProvider
+        self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
     }
 
     public func start() {
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+        let mask = CGEventMask(
+            (1 << CGEventType.keyDown.rawValue) |
+            (1 << CGEventType.tapDisabledByTimeout.rawValue) |
+            (1 << CGEventType.tapDisabledByUserInput.rawValue)
+        )
         let callback: CGEventTapCallBack = { proxy, type, event, refcon in
-            guard type == .keyDown, let refcon else { return Unmanaged.passUnretained(event) }
+            guard let refcon else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<TriggerMonitor>.fromOpaque(refcon).takeUnretainedValue()
+
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let eventTap = monitor.eventTap {
+                    CGEvent.tapEnable(tap: eventTap, enable: true)
+                }
+                monitor.onDebugEvent(.tapReenabled)
+                return Unmanaged.passUnretained(event)
+            }
+
+            guard type == .keyDown else { return Unmanaged.passUnretained(event) }
             monitor.handle(event)
             return Unmanaged.passUnretained(event)
         }
@@ -32,13 +55,19 @@ public final class TriggerMonitor {
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
 
-        guard let eventTap else { return }
+        guard let eventTap else {
+            isActive = false
+            onDebugEvent(.tapCreationFailed)
+            return
+        }
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         if let runLoopSource {
             CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         }
         CGEvent.tapEnable(tap: eventTap, enable: true)
+        isActive = true
+        onDebugEvent(.tapStarted)
     }
 
     deinit {
@@ -48,6 +77,7 @@ public final class TriggerMonitor {
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }
+        isActive = false
     }
 
     private func handle(_ event: CGEvent) {
@@ -70,9 +100,14 @@ public final class TriggerMonitor {
                 recentCharacters = String(recentCharacters.suffix(max(triggerProvider().count, 1)))
             }
         }
+        keypressCount += 1
+        lastCharacters = recentCharacters
+        onDebugEvent(.key(recentCharacters))
 
         if recentCharacters == triggerProvider() {
             recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatched)
             onTrigger()
         }
     }
@@ -81,4 +116,12 @@ public final class TriggerMonitor {
         let flags = event.flags
         return flags.contains(.maskCommand) || flags.contains(.maskControl)
     }
+}
+
+public enum TriggerMonitorDebugEvent: Sendable {
+    case tapStarted
+    case tapCreationFailed
+    case tapReenabled
+    case key(String)
+    case triggerMatched
 }
