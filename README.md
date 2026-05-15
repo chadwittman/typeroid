@@ -10,6 +10,7 @@ TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/m
 - Global trigger, default `//`.
 - Accessibility-based replacement first, with clipboard fallback for apps that do not expose editable text.
 - OpenAI Responses API cleanup.
+- Default model: `gpt-4.1-nano` for low latency and low cost.
 - One mode: fix spelling, grammar, punctuation, capitalization, and light clarity.
 - No preview.
 - Undo last replacement from the menu bar.
@@ -67,6 +68,8 @@ Set your OpenAI API key from the menu-bar item before using `//`. The key is sto
 Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
 
 To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list.
+
+Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
 
 ## Smoke Test
 

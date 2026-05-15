@@ -5,6 +5,14 @@ public enum Settings {
     private static let modelKey = "openai_model"
     private static let triggerKey = "trigger"
     private static let excludedBundleIDsKey = "excluded_bundle_ids"
+    private static let userConfiguredExcludedBundleIDsKey = "user_configured_excluded_bundle_ids"
+
+    public static let defaultModel = "gpt-4.1-nano"
+    public static let defaultExcludedBundleIDs: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.Warp-Stable"
+    ]
 
     public static var apiKey: String? {
         get {
@@ -16,7 +24,7 @@ public enum Settings {
     }
 
     public static var model: String {
-        UserDefaults.standard.string(forKey: modelKey) ?? "gpt-4.1-mini"
+        UserDefaults.standard.string(forKey: modelKey) ?? defaultModel
     }
 
     public static var trigger: String {
@@ -31,10 +39,14 @@ public enum Settings {
 
     public static var excludedBundleIDs: Set<String> {
         get {
-            Set(UserDefaults.standard.stringArray(forKey: excludedBundleIDsKey) ?? [])
+            guard UserDefaults.standard.bool(forKey: userConfiguredExcludedBundleIDsKey) else {
+                return defaultExcludedBundleIDs
+            }
+            return Set(UserDefaults.standard.stringArray(forKey: excludedBundleIDsKey) ?? [])
         }
         set {
             UserDefaults.standard.set(Array(newValue).sorted(), forKey: excludedBundleIDsKey)
+            UserDefaults.standard.set(true, forKey: userConfiguredExcludedBundleIDsKey)
         }
     }
 

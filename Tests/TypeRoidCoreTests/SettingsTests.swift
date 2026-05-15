@@ -3,6 +3,10 @@ import Testing
 
 @Suite(.serialized)
 struct SettingsTests {
+    @Test func defaultModelUsesNanoForLowLatencyCleanup() {
+        #expect(Settings.defaultModel == "gpt-4.1-nano")
+    }
+
     @Test func excludedBundleIDsCanBeToggled() {
         let previous = Settings.excludedBundleIDs
         defer { Settings.excludedBundleIDs = previous }
