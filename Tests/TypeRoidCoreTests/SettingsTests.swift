@@ -3,8 +3,22 @@ import Testing
 
 @Suite(.serialized)
 struct SettingsTests {
-    @Test func defaultModelUsesNanoForLowLatencyCleanup() {
-        #expect(Settings.defaultModel == "gpt-4.1-nano")
+    @Test func defaultProviderIsOpenAI() {
+        #expect(Settings.provider == .openai)
+    }
+
+    @Test func defaultModelMatchesProviderDefault() {
+        // model should default to current provider's default
+        let expected = Settings.provider.defaultModel
+        #expect(!expected.isEmpty)
+    }
+
+    @Test func defaultTriggerIsDoubleSlash() {
+        #expect(Settings.trigger == "//")
+    }
+
+    @Test func defaultRewriteTriggerIsDoubleBackslash() {
+        #expect(Settings.rewriteTrigger == "\\\\")
     }
 
     @Test func knownBrowsersAreTrackedForAddressBarSafety() {

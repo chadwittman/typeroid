@@ -1,146 +1,108 @@
-# TypeRoid
+<p align="center">
+  <img src="banner.png" alt="typeROID" width="700" />
+</p>
 
-Type like hell. Send like a pro.
+<p align="center">
+  <strong>Type like a goblin. Send like a grown-up.</strong>
+</p>
 
-TypeRoid is a macOS menu-bar POC that watches for `//`, grabs the current line/message, sends it to an API, and replaces it in-place with the same voice cleaned up.
+<p align="center">
+  Performance-enhancing drugs for your typing. Open source. No telemetry. No account. Just you and your AI.
+</p>
 
-## POC Scope
+---
 
-- Native Swift macOS menu-bar app.
-- Global trigger, default `//`.
-- Accessibility-based replacement first, with clipboard fallback for apps that do not expose editable text.
-- OpenAI Responses API cleanup.
-- Default model: `gpt-4.1-nano` for low latency and low cost.
-- One mode: fix spelling, grammar, punctuation, capitalization, and light clarity.
-- No preview.
-- Undo last replacement from the menu bar.
-- API self-test from the menu bar.
-- Per-app exclusions.
-- Rewrite pipeline diagnostics for capture/API/replacement debugging.
-- Optional menu opening after `//` so users can see what happened.
-- Diagnostics show capture length, not captured text.
+## What is typeROID?
 
-## Build
+You already type like a caveman to ChatGPT and Claude. No caps, no grammar, pure brain dump. It works perfectly.
 
-```bash
-swift build
-```
+typeROID lets you do that with humans too. Type however you want in any app, hit a trigger, and your text gets fixed in place. No copy-paste. No switching apps. Just type and go.
 
-## Test
+## Triggers
 
-```bash
-swift test
-```
+| Trigger | What it does | Example |
+|---------|-------------|---------|
+| `//` | Fix your text | `heyy john cn u movee the mtg//` |
+| `??` | Ask AI anything | `whats 3pm EST in london??` |
+| `;;` | Translate | `hello how are you doing;;` |
+| `==` | Math & conversions | `15% of 340==` |
+| `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply |
 
-The current tests cover the OpenAI request shape, the "fix, don't rewrite" system instruction, response parsing, trigger stripping, current-message extraction, Accessibility replacement planning, and app exclusion settings.
+## Install
 
-To build a menu-bar `.app` bundle:
+1. Download `typeROID.zip` from [Releases](../../releases)
+2. Unzip and drag `TypeRoid.app` to your Applications folder
+3. Open it. Follow the onboarding.
+4. Grant Accessibility and Input Monitoring permissions when prompted
+5. Paste your API key (OpenAI, Claude, Gemini, or Groq)
+6. Type like a goblin
 
-```bash
-chmod +x scripts/build-app.sh
-./scripts/build-app.sh
-open build/TypeRoid.app
-```
+> macOS may block the app since it's not notarized. Run this in Terminal to fix it:
+> ```
+> xattr -cr ~/Applications/TypeRoid.app
+> ```
+> Then open the app normally. You only need to do this once.
 
-For day-to-day development, install and launch from a stable app path:
-
-```bash
-./scripts/install-dev-app.sh
-```
-
-Then grant permissions to `/Users/chaztyler/Applications/TypeRoid.app`. This reduces macOS permission churn compared with launching directly from `build/`.
-
-## Run
+## Build from source
 
 ```bash
-swift run TypeRoid
+git clone https://github.com/typeroid/typeroid.git
+cd typeroid
+swift build -c release
+bash scripts/install-dev-app.sh
 ```
 
-The first run needs macOS permissions:
+Requires Xcode Command Line Tools and macOS 14+.
 
-1. Open System Settings.
-2. Go to Privacy & Security > Accessibility.
-3. Enable TypeRoid, Terminal, or the built executable, depending on how you launched it.
-4. Go to Privacy & Security > Input Monitoring.
-5. Enable TypeRoid, Terminal, or the built executable there too if macOS asks.
-6. Relaunch TypeRoid.
+## Providers
 
-If the debug status shows `Monitor: blocked` or `Accessibility trusted: no`, run:
+typeROID works with any of these AI providers. Bring your own API key.
 
-```bash
-./scripts/reset-permissions.sh
+| Provider | Model | Cost |
+|----------|-------|------|
+| OpenAI | gpt-4.1-nano | ~$0.001/message |
+| Anthropic (Claude) | claude-haiku-4-5 | ~$0.001/message |
+| Google (Gemini) | gemini-2.0-flash | Free tier available |
+| Groq | llama-3.1-8b | Free tier available |
+
+## Privacy & Security
+
+typeROID is built for people who care about where their data goes.
+
+- **No telemetry.** No analytics. No crash reporting. No network calls except your AI provider.
+- **No database.** No account. No signup. Nothing stored on disk except your settings.
+- **No logs.** Your text is never written to a file. It lives in memory during the API call, then it's gone.
+- **API keys in Keychain.** Stored encrypted in macOS Keychain. Never logged or printed.
+- **Sensitive data blocked.** SSNs, credit card numbers, passwords, and API keys are detected and blocked before they leave your machine.
+- **Secure text fields blocked.** typeROID won't activate in password fields or browser address bars.
+- **Zero dependencies.** No third-party packages. Just Apple frameworks. No supply chain risk.
+- **Fully open source.** Every line is auditable. Read [SECURITY.md](SECURITY.md) for the full breakdown.
+
+> **Google Gemini note:** Google's API puts your API key in the URL. Your text is encrypted (HTTPS), but the key could be visible on public wifi or corporate VPNs with network inspection. OpenAI, Claude, and Groq send the key in fully encrypted headers. typeROID warns you when you select Google.
+
+## Writing Style
+
+Want typeROID to sound like you? Create `~/.typeroid/style.md` with examples of how you write. Enable it from the menu: Settings > Enable Writing Style.
+
+```markdown
+I keep it casual and direct. Short sentences.
+I say "hey" not "hello". No corporate language.
 ```
 
-Then remove/re-add `/Users/chaztyler/TypeRoid/build/TypeRoid.app` in both Accessibility and Input Monitoring before relaunching.
+## How it works
 
-Set your OpenAI API key from the menu-bar item before using `//`. The key is stored in your macOS Keychain. You can also change the trigger from the menu; `//` is the default.
+1. typeROID runs as a menu bar app (look for the `//` icon)
+2. Monitors your keyboard for triggers (`//`, `??`, `;;`, `==`, `\\`)
+3. Captures the text via macOS Accessibility API
+4. Sends it to your AI provider with a focused system prompt
+5. Replaces your text in place, in whatever app you're using
 
-Use `Test Cleanup API` from the menu to verify the API key and cleanup prompt before testing in a real text field.
+For `\\` summarize mode: copy a thread to your clipboard, type `\\`. typeROID reads your clipboard as context and drafts a reply. The reply is copied to your clipboard for Cmd+V.
 
-To disable TypeRoid in one app, type in that app, open the TypeRoid menu, and choose `Exclude <App Name>`. Use `Clear App Exclusions` to reset the list to the safety defaults.
+## Support
 
-Terminal, iTerm, and Warp are excluded by default so TypeRoid does not rewrite shell commands.
+[@typeroid](https://twitter.com/typeroid) on X or [open an issue](../../issues).
 
-TypeRoid blocks secure text fields and password-style controls.
-TypeRoid also blocks likely browser address/search bars while allowing normal page text fields.
+## License
 
-TypeRoid sends only the triggered message to the configured OpenAI API endpoint for cleanup. The API key is stored in macOS Keychain, and copied diagnostics do not include captured message content.
-
-See [SECURITY.md](SECURITY.md) for the current safety posture and production hardening checklist.
-
-## Smoke Test
-
-1. Relaunch the signed app bundle:
-
-   ```bash
-   pkill TypeRoid || true
-   open ~/TypeRoid/build/TypeRoid.app
-   ```
-
-2. Choose `Test Cleanup API` from the TypeRoid menu. This verifies the API key, network call, model, and cleanup prompt.
-3. In Notes, type:
-
-   ```text
-   hey john i saw the thing come through looks good but can we move meeting to tmrw im slammed today //
-   ```
-
-4. If it does not replace correctly, open the TypeRoid menu and read:
-   - `Monitor`
-   - `Last keys`
-   - `Keys seen`
-   - `Last rewrite`
-   - `Captured`
-   - `Model`
-
-Use `Copy Debug Status` to copy those fields to the clipboard. They separate keyboard monitoring, trigger detection, text capture, API cleanup, and replacement failures.
-
-## Current Replacement Strategy
-
-The POC uses Accessibility replacement first:
-
-1. Detect `//`.
-2. Read the focused text field through macOS Accessibility.
-3. Find the current message before the last `//`.
-4. Clean via API.
-5. Replace that message and the trigger in-place.
-
-If the focused app does not expose editable text through Accessibility, TypeRoid falls back to clipboard replacement:
-
-1. Delete the trigger.
-2. Select from cursor to the beginning of the current paragraph/message with `Option+Shift+Up`, then fall back through `Cmd+Shift+Left` for single-line inputs.
-3. Copy.
-4. Clean via API.
-5. Paste the replacement.
-
-That is intentionally simple and works best in plain text fields. App-specific hardening should come next for Slack, Chrome, Mail, Messages, and Notes.
-
-## Rewrite Contract
-
-TypeRoid should not rewrite you into corporate assistant voice.
-
-- Preserve voice and intent.
-- Fix spelling, grammar, punctuation, capitalization.
-- Do not add ideas.
-- Do not add jargon.
-- Do not over-polish.
-- Keep directness and contractions.
+MIT

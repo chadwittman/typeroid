@@ -1,14 +1,22 @@
 import Foundation
 
 public enum Settings {
-    private static let apiKeyKey = "openai_api_key"
-    private static let modelKey = "openai_model"
+    // Keys
+    private static let providerKey = "ai_provider"
+    private static let modelKey = "ai_model"
     private static let triggerKey = "trigger"
+    private static let rewriteTriggerKey = "rewrite_trigger"
     private static let excludedBundleIDsKey = "excluded_bundle_ids"
     private static let userConfiguredExcludedBundleIDsKey = "user_configured_excluded_bundle_ids"
     private static let openMenuAfterRewriteKey = "open_menu_after_rewrite"
+    private static let onboardingCompleteKey = "onboarding_complete"
+    private static let onboardingStepKey = "onboarding_step"
+    private static let languageKey = "language"
+    private static let contextTriggerKey = "context_trigger"
+    private static let translateTriggerKey = "translate_trigger"
+    private static let translateTargetKey = "translate_target"
+    private static let mathTriggerKey = "math_trigger"
 
-    public static let defaultModel = "gpt-4.1-nano"
     public static let defaultExcludedBundleIDs: Set<String> = [
         "com.apple.Terminal",
         "com.googlecode.iterm2",
@@ -22,19 +30,46 @@ public enum Settings {
         "company.thebrowser.Browser"
     ]
 
-    public static var apiKey: String? {
+    // MARK: - Provider
+    public static var provider: AIProvider {
         get {
-            KeychainStore.read(account: apiKeyKey)
+            if let raw = UserDefaults.standard.string(forKey: providerKey),
+               let p = AIProvider(rawValue: raw) {
+                return p
+            }
+            return .openai
         }
         set {
-            KeychainStore.write(newValue, account: apiKeyKey)
+            UserDefaults.standard.set(newValue.rawValue, forKey: providerKey)
         }
     }
 
-    public static var model: String {
-        UserDefaults.standard.string(forKey: modelKey) ?? defaultModel
+    // MARK: - API Keys (per provider)
+    public static func apiKey(for provider: AIProvider) -> String? {
+        KeychainStore.read(account: provider.keychainAccount)
     }
 
+    public static func setAPIKey(_ key: String?, for provider: AIProvider) {
+        KeychainStore.write(key, account: provider.keychainAccount)
+    }
+
+    // Convenience: current provider's key
+    public static var apiKey: String? {
+        get { apiKey(for: provider) }
+        set { setAPIKey(newValue, for: provider) }
+    }
+
+    // MARK: - Model
+    public static var model: String {
+        get {
+            UserDefaults.standard.string(forKey: modelKey) ?? provider.defaultModel
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: modelKey)
+        }
+    }
+
+    // MARK: - Triggers
     public static var trigger: String {
         get {
             let value = UserDefaults.standard.string(forKey: triggerKey) ?? "//"
@@ -45,6 +80,95 @@ public enum Settings {
         }
     }
 
+    public static var rewriteTrigger: String {
+        get {
+            let value = UserDefaults.standard.string(forKey: rewriteTriggerKey) ?? "\\\\"
+            return value.isEmpty ? "\\\\" : value
+        }
+        set {
+            UserDefaults.standard.set(newValue.isEmpty ? "\\\\" : newValue, forKey: rewriteTriggerKey)
+        }
+    }
+
+    public static var contextTrigger: String {
+        get {
+            let value = UserDefaults.standard.string(forKey: contextTriggerKey) ?? "??"
+            return value.isEmpty ? "??" : value
+        }
+        set {
+            UserDefaults.standard.set(newValue.isEmpty ? "??" : newValue, forKey: contextTriggerKey)
+        }
+    }
+
+    public static var translateTrigger: String {
+        get { UserDefaults.standard.string(forKey: translateTriggerKey) ?? ";;" }
+        set { UserDefaults.standard.set(newValue.isEmpty ? ";;" : newValue, forKey: translateTriggerKey) }
+    }
+
+    public static var mathTrigger: String {
+        get { UserDefaults.standard.string(forKey: mathTriggerKey) ?? "==" }
+        set { UserDefaults.standard.set(newValue.isEmpty ? "==" : newValue, forKey: mathTriggerKey) }
+    }
+
+    public static var translateTarget: String {
+        get { UserDefaults.standard.string(forKey: translateTargetKey) ?? "Spanish" }
+        set { UserDefaults.standard.set(newValue, forKey: translateTargetKey) }
+    }
+
+    // MARK: - Language
+    public static let supportedLanguages = [
+        "English", "Spanish", "French", "German", "Portuguese", "Italian",
+        "Dutch", "Japanese", "Korean", "Chinese", "Arabic", "Hindi",
+        "Russian", "Polish", "Turkish", "Swedish", "Norwegian", "Danish",
+    ]
+
+    public static var language: String {
+        get { UserDefaults.standard.string(forKey: languageKey) ?? "English" }
+        set { UserDefaults.standard.set(newValue, forKey: languageKey) }
+    }
+
+    // MARK: - Writing Style
+    private static let useStyleKey = "use_writing_style"
+    private static let webSearchKey = "web_search_enabled"
+
+    public static let currentVersion = "0.1.0"
+    public static let updateCheckURL = "https://raw.githubusercontent.com/typeroid/typeroid/main/version.txt"
+
+    public static var webSearchEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: webSearchKey) }
+        set { UserDefaults.standard.set(newValue, forKey: webSearchKey) }
+    }
+
+    public static var useWritingStyle: Bool {
+        get { UserDefaults.standard.bool(forKey: useStyleKey) }
+        set { UserDefaults.standard.set(newValue, forKey: useStyleKey) }
+    }
+
+    public static var stylePath: String {
+        NSHomeDirectory() + "/.typeroid/style.md"
+    }
+
+    public static func loadStyle() -> String? {
+        guard FileManager.default.fileExists(atPath: stylePath) else { return nil }
+        guard let content = try? String(contentsOfFile: stylePath, encoding: .utf8) else { return nil }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Skip if it's just the template comments
+        if trimmed.hasPrefix("# My Writing Style") && trimmed.count < 200 { return nil }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    // MARK: - Onboarding
+    public static var onboardingComplete: Bool {
+        get { UserDefaults.standard.bool(forKey: onboardingCompleteKey) }
+        set { UserDefaults.standard.set(newValue, forKey: onboardingCompleteKey) }
+    }
+
+    public static var onboardingStep: Int {
+        get { UserDefaults.standard.integer(forKey: onboardingStepKey) }
+        set { UserDefaults.standard.set(newValue, forKey: onboardingStepKey) }
+    }
+
+    // MARK: - Other Settings
     public static var openMenuAfterRewrite: Bool {
         get {
             UserDefaults.standard.object(forKey: openMenuAfterRewriteKey) as? Bool ?? true
@@ -75,11 +199,7 @@ public enum Settings {
     public static func setExcluded(_ isExcluded: Bool, bundleID: String) {
         guard !bundleID.isEmpty else { return }
         var ids = excludedBundleIDs
-        if isExcluded {
-            ids.insert(bundleID)
-        } else {
-            ids.remove(bundleID)
-        }
+        if isExcluded { ids.insert(bundleID) } else { ids.remove(bundleID) }
         excludedBundleIDs = ids
     }
 

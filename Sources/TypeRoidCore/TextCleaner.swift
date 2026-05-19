@@ -4,21 +4,86 @@ public enum TextCleanerError: LocalizedError, Equatable, Sendable {
     case missingAPIKey
     case invalidResponse
     case apiError(String)
+    case unsupportedProvider
 
     public var errorDescription: String? {
         switch self {
-        case .missingAPIKey:
-            return "Missing OpenAI API key."
-        case .invalidResponse:
-            return "The API response could not be read."
-        case .apiError(let message):
-            return message
+        case .missingAPIKey: return "No API key set for the selected provider."
+        case .invalidResponse: return "The API response could not be read."
+        case .apiError(let msg): return msg
+        case .unsupportedProvider: return "Unsupported AI provider."
+        }
+    }
+}
+
+public enum CleanMode: Sendable, Equatable {
+    case clean      // // fix grammar, spelling, punctuation
+    case query      // ?? ask AI, get a response inline
+    case context    // \\ use clipboard as context, draft a response
+    case translate  // ;; translate to target language
+    case math       // == calculate or convert
+    case custom(String) // ..commandname, user-defined commands
+}
+
+public enum AIProvider: String, CaseIterable, Sendable {
+    case openai = "openai"
+    case anthropic = "anthropic"
+    case google = "google"
+    case groq = "groq"
+
+    public var displayName: String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .anthropic: return "Anthropic (Claude)"
+        case .google: return "Google (Gemini)"
+        case .groq: return "Groq"
+        }
+    }
+
+    public var defaultModel: String {
+        switch self {
+        case .openai: return "gpt-4.1-nano"
+        case .anthropic: return "claude-haiku-4-5-20251001"
+        case .google: return "gemini-2.0-flash"
+        case .groq: return "llama-3.1-8b-instant"
+        }
+    }
+
+    public var endpoint: String {
+        switch self {
+        case .openai: return "https://api.openai.com/v1/responses"
+        case .anthropic: return "https://api.anthropic.com/v1/messages"
+        case .google: return "https://generativelanguage.googleapis.com/v1beta/models"
+        case .groq: return "https://api.groq.com/openai/v1/chat/completions"
+        }
+    }
+
+    public var keychainAccount: String {
+        return "\(rawValue)_api_key"
+    }
+
+    public var keyPlaceholder: String {
+        switch self {
+        case .openai: return "sk-..."
+        case .anthropic: return "sk-ant-..."
+        case .google: return "AIza..."
+        case .groq: return "gsk_..."
+        }
+    }
+
+    /// cheapest model options for each provider
+    public var availableModels: [String] {
+        switch self {
+        case .openai: return ["gpt-4.1-nano", "gpt-4.1-mini", "gpt-4o-mini"]
+        case .anthropic: return ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250514"]
+        case .google: return ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+        case .groq: return ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
         }
     }
 }
 
 public enum TextCleaner {
-    static let systemInstruction = """
+    static let cleanInstruction = """
     You are TypeRoid, a restrained cleanup tool.
 
     Fix spelling, grammar, punctuation, and capitalization.
@@ -33,95 +98,324 @@ public enum TextCleaner {
     Return only the corrected text.
     """
 
-    public static func clean(_ text: String) async throws -> String {
-        guard let apiKey = Settings.apiKey, !apiKey.isEmpty else {
+    static let queryInstruction = """
+    You are typeROID, an AI assistant embedded in whatever app the user is typing in.
+
+    The user typed a question or request directly into a text field and wants a response.
+    Your answer will replace what they typed, inline.
+
+    Be concise and direct. Answer in plain text.
+    No markdown. No bullet points. No headers.
+    Write like a knowledgeable human texting back.
+    If they asked a question, just answer it.
+    If they gave an instruction, do what they asked.
+    Keep it short unless the question requires detail.
+    Return only the response.
+    """
+
+    static let contextInstruction = """
+    You are typeROID in context mode. The user copied text (a thread, email, document) to their clipboard and wants help.
+
+    Use smart brevity to respond:
+    1. WHAT'S HAPPENING: One sentence. The bottom line.
+    2. WHY IT MATTERS: One sentence if needed.
+    3. SUGGESTED REPLY: A draft reply they can send. Match the conversation's tone. Keep it tight.
+
+    Write plain text only. No markdown. No headers. No bullet points.
+    The suggested reply should be on its own line at the end, clearly separated.
+    """
+
+    static let mathInstruction = """
+    You are typeROID in math mode.
+
+    The user typed a math expression, unit conversion, or calculation.
+    Compute the answer and return ONLY the result.
+    For simple math: just the number.
+    For conversions: the converted value with unit.
+    For percentages: the computed value.
+    No explanation. No steps. Just the answer.
+    Examples: "15% of 340" -> "51", "5ft 11in in cm" -> "180.3 cm", "234 * 17" -> "3,978"
+    """
+
+    public static func processWithContext(_ request: String, threadContext: String, mode: CleanMode = .context) async throws -> String {
+        let provider = Settings.provider
+        let apiKey = Settings.apiKey(for: provider)
+        guard let apiKey, !apiKey.isEmpty else {
             throw TextCleanerError.missingAPIKey
         }
 
+        // Sensitive data check on thread context
+        if SensitiveFilter.containsSensitiveData(threadContext) || SensitiveFilter.containsSensitiveData(request) {
+            throw TextCleanerError.apiError("Blocked: sensitive data detected. typeROID won't send this to any API.")
+        }
+
+        var fullInstruction = contextInstruction
+        if Settings.useWritingStyle, let style = Settings.loadStyle() {
+            fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
+        }
+        let fullPrompt = """
+        THREAD CONTEXT:
+        \(threadContext)
+
+        USER REQUEST:
+        \(request.isEmpty ? "Summarize this thread and suggest a response." : request)
+        """
+
+        let model = Settings.model
+        switch provider {
+        case .openai: return try await callOpenAI(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .anthropic: return try await callAnthropic(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .google: return try await callGoogle(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .groq: return try await callGroq(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        }
+    }
+
+    static let translateInstruction = """
+    You are typeROID in translate mode.
+
+    The user typed in one language and wants it translated.
+    Translate naturally. Not word-for-word. Sound like a native speaker.
+    Preserve the tone (casual, formal, etc.)
+    Return only the translated text.
+    """
+
+    /// Load a custom command's system prompt from ~/.typeroid/commands/
+    public static func loadCustomCommand(_ name: String) -> String? {
+        let path = NSHomeDirectory() + "/.typeroid/commands/\(name).txt"
+        guard FileManager.default.fileExists(atPath: path),
+              let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// List all available custom command names (only 2-character symbol triggers)
+    public static func availableCommands() -> [String] {
+        let dir = NSHomeDirectory() + "/.typeroid/commands"
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        return files
+            .filter { $0.hasSuffix(".txt") }
+            .map { String($0.dropLast(4)) }
+            .filter { $0.count == 2 } // only two-symbol triggers
+            .sorted()
+    }
+
+    public static func process(_ text: String, mode: CleanMode = .clean) async throws -> String {
+        let provider = Settings.provider
+        let apiKey = Settings.apiKey(for: provider)
+        guard let apiKey, !apiKey.isEmpty else {
+            throw TextCleanerError.missingAPIKey
+        }
+
+        let targetLang = Settings.translateTarget
+
+        let instruction: String
+        switch mode {
+        case .clean:
+            instruction = cleanInstruction
+        case .query:
+            instruction = queryInstruction
+        case .context:
+            instruction = contextInstruction
+        case .translate:
+            instruction = translateInstruction + "\nTranslate to \(targetLang)."
+        case .math:
+            instruction = mathInstruction
+        case .custom(let name):
+            guard let customPrompt = loadCustomCommand(name) else {
+                throw TextCleanerError.apiError("No command for '\(name)'. Create ~/.typeroid/commands/\(name).txt with your prompt.")
+            }
+            instruction = customPrompt + "\nReturn only the result. No explanation."
+        }
+
+        // Sensitive data check
+        if SensitiveFilter.containsSensitiveData(text) {
+            throw TextCleanerError.apiError("Blocked: sensitive data detected (SSN, credit card, password, or API key). typeROID won't send this to any API.")
+        }
+
+        var fullInstruction = instruction
+        if Settings.useWritingStyle, let style = Settings.loadStyle() {
+            fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
+        }
+
+        let model = Settings.model
+        let useWebSearch = (mode == .query) && Settings.webSearchEnabled
+
+        switch provider {
+        case .openai:
+            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch)
+        case .anthropic:
+            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .google:
+            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch)
+        case .groq:
+            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey)
+        }
+    }
+
+    // Keep backward compat
+    public static func clean(_ text: String) async throws -> String {
+        try await process(text, mode: .clean)
+    }
+
+    // MARK: - OpenAI (Responses API)
+    private static func callOpenAI(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try makeRequestBody(text: text, model: Settings.model)
+
+        var body: [String: Any] = [
+            "model": model,
+            "temperature": 0.1,
+            "input": [
+                ["role": "system", "content": [["type": "input_text", "text": instruction]]],
+                ["role": "user", "content": [["type": "input_text", "text": text]]]
+            ]
+        ]
+        if webSearch {
+            body["tools"] = [["type": "web_search_preview"]]
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        configureRequest(&request)
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let body = String(data: data, encoding: .utf8) ?? "OpenAI API error"
-            throw TextCleanerError.apiError(body)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let outputText = json?["output_text"] as? String, !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return outputText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-
-        return try parseResponse(data)
-    }
-
-    static func makeRequestBody(text: String, model: String) throws -> Data {
-        try JSONEncoder().encode(ResponsesRequest(
-            model: model,
-            input: [
-                ResponsesMessage(
-                    role: "system",
-                    content: [
-                        ResponsesContent(type: "input_text", text: systemInstruction)
-                    ]
-                ),
-                ResponsesMessage(
-                    role: "user",
-                    content: [
-                        ResponsesContent(type: "input_text", text: text)
-                    ]
-                )
-            ],
-            temperature: 0.1
-        ))
-    }
-
-    static func parseResponse(_ data: Data) throws -> String {
-        let decoded = try JSONDecoder().decode(ResponsesResponse.self, from: data)
-        if let outputText = decoded.outputText?.trimmingCharacters(in: .whitespacesAndNewlines), !outputText.isEmpty {
-            return outputText
-        }
-
-        for item in decoded.output ?? [] {
-            for content in item.content ?? [] {
-                if let text = content.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-                    return text
+        if let output = json?["output"] as? [[String: Any]] {
+            for item in output {
+                if let content = item["content"] as? [[String: Any]] {
+                    for c in content {
+                        if let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
                 }
             }
         }
-
         throw TextCleanerError.invalidResponse
     }
-}
 
-private struct ResponsesRequest: Encodable {
-    let model: String
-    let input: [ResponsesMessage]
-    let temperature: Double
-}
+    // MARK: - Anthropic (Messages API)
+    private static func callAnthropic(text: String, instruction: String, model: String, apiKey: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-private struct ResponsesMessage: Encodable {
-    let role: String
-    let content: [ResponsesContent]
-}
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 1024,
+            "system": instruction,
+            "messages": [
+                ["role": "user", "content": text]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        configureRequest(&request)
 
-private struct ResponsesContent: Encodable {
-    let type: String
-    let text: String
-}
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
 
-private struct ResponsesResponse: Decodable {
-    let outputText: String?
-    let output: [ResponsesOutput]?
-
-    enum CodingKeys: String, CodingKey {
-        case outputText = "output_text"
-        case output
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let content = json?["content"] as? [[String: Any]],
+           let first = content.first,
+           let text = first["text"] as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        throw TextCleanerError.invalidResponse
     }
-}
 
-private struct ResponsesOutput: Decodable {
-    let content: [ResponsesOutputContent]?
-}
+    // MARK: - Google (Gemini)
+    private static func callGoogle(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false) async throws -> String {
+        let urlString = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+        var request = URLRequest(url: URL(string: urlString)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
 
-private struct ResponsesOutputContent: Decodable {
-    let text: String?
+        var body: [String: Any] = [
+            "system_instruction": ["parts": [["text": instruction]]],
+            "contents": [["parts": [["text": text]]]],
+            "generationConfig": ["temperature": 0.1]
+        ]
+        if webSearch {
+            body["tools"] = [["google_search": [:]]]
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        configureRequest(&request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let candidates = json?["candidates"] as? [[String: Any]],
+           let first = candidates.first,
+           let content = first["content"] as? [String: Any],
+           let parts = content["parts"] as? [[String: Any]],
+           let part = parts.first,
+           let text = part["text"] as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        throw TextCleanerError.invalidResponse
+    }
+
+    // MARK: - Groq (OpenAI-compatible Chat API)
+    private static func callGroq(text: String, instruction: String, model: String, apiKey: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "model": model,
+            "temperature": 0.1,
+            "max_tokens": 1024,
+            "messages": [
+                ["role": "system", "content": instruction],
+                ["role": "user", "content": text]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        configureRequest(&request)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let choices = json?["choices"] as? [[String: Any]],
+           let first = choices.first,
+           let message = first["message"] as? [String: Any],
+           let text = message["content"] as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        throw TextCleanerError.invalidResponse
+    }
+
+    // MARK: - Helpers
+    private static let requestTimeout: TimeInterval = 30
+
+    private static func configureRequest(_ request: inout URLRequest) {
+        request.timeoutInterval = requestTimeout
+    }
+
+    private static func checkHTTPStatus(_ response: URLResponse, data: Data) throws {
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            // Sanitize: don't expose full API response body to user
+            let code = http.statusCode
+            let hint: String
+            switch code {
+            case 401: hint = "Invalid API key. Check your key in Settings."
+            case 403: hint = "Access denied. Your key may not have the right permissions."
+            case 429: hint = "Rate limited. Wait a moment and try again."
+            case 500...599: hint = "Provider is having issues. Try again shortly."
+            default: hint = "Request failed (status \(code))."
+            }
+            throw TextCleanerError.apiError(hint)
+        }
+    }
 }

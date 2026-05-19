@@ -3,8 +3,13 @@ import Carbon
 import Foundation
 
 public final class TriggerMonitor {
-    private let onTrigger: () -> Void
-    private let triggerProvider: () -> String
+    private let onTrigger: (CleanMode) -> Void
+    private let triggerProvider: () -> String          // //
+    private let contextTriggerProvider: () -> String   // \\ (clipboard context)
+    private let queryTriggerProvider: () -> String     // ?? (ask AI)
+    private let translateTriggerProvider: () -> String  // ;; (translate)
+    private let mathTriggerProvider: () -> String      // == (math)
+    private let customCommandsProvider: () -> [String] // available ..commands
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -15,10 +20,20 @@ public final class TriggerMonitor {
 
     public init(
         triggerProvider: @escaping () -> String,
+        contextTriggerProvider: @escaping () -> String = { Settings.rewriteTrigger },
+        queryTriggerProvider: @escaping () -> String = { Settings.contextTrigger },
+        translateTriggerProvider: @escaping () -> String = { Settings.translateTrigger },
+        mathTriggerProvider: @escaping () -> String = { Settings.mathTrigger },
+        customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
-        onTrigger: @escaping () -> Void
+        onTrigger: @escaping (CleanMode) -> Void
     ) {
         self.triggerProvider = triggerProvider
+        self.contextTriggerProvider = contextTriggerProvider
+        self.queryTriggerProvider = queryTriggerProvider
+        self.translateTriggerProvider = translateTriggerProvider
+        self.mathTriggerProvider = mathTriggerProvider
+        self.customCommandsProvider = customCommandsProvider
         self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
     }
@@ -92,23 +107,80 @@ public final class TriggerMonitor {
         guard length > 0 else { return }
 
         let string = String(utf16CodeUnits: chars, count: length)
+        let cleanTrigger = triggerProvider()
+        let contextTrigger = contextTriggerProvider()   // \\
+        let queryTrigger = queryTriggerProvider()       // ??
+        let translateTrigger = translateTriggerProvider() // ;;
+        let mathTrigger = mathTriggerProvider()         // ==
+        let customCommands = customCommandsProvider()
+        let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, maxCustomLen, 1)
+
         for character in string {
             if character.isNewline {
                 recentCharacters.removeAll()
             } else {
                 recentCharacters.append(character)
-                recentCharacters = String(recentCharacters.suffix(max(triggerProvider().count, 1)))
+                recentCharacters = String(recentCharacters.suffix(maxLen))
             }
         }
         keypressCount += 1
-        lastCharacters = recentCharacters
-        onDebugEvent(.key(recentCharacters))
+        lastCharacters = String(repeating: ".", count: recentCharacters.count)
+        onDebugEvent(.key("\(recentCharacters.count) buffered"))
 
-        if recentCharacters == triggerProvider() {
+        // Check custom commands - filename IS the trigger, longest first
+        for cmd in customCommands.sorted(by: { $0.count > $1.count }) {
+            if recentCharacters.hasSuffix(cmd) {
+                recentCharacters.removeAll()
+                lastCharacters = ""
+                onDebugEvent(.triggerMatchedContext)
+                onTrigger(.custom(cmd))
+                return
+            }
+        }
+
+        // Check math trigger (==)
+        if recentCharacters.hasSuffix(mathTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedTranslate)  // reuse event for now
+            onTrigger(.math)
+            return
+        }
+
+        // Check translate trigger (;;)
+        if recentCharacters.hasSuffix(translateTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedTranslate)
+            onTrigger(.translate)
+            return
+        }
+
+        // Check context trigger (\\) - read screen
+        if recentCharacters.hasSuffix(contextTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedContext)
+            onTrigger(.context)
+            return
+        }
+
+        // Check query trigger (??) - ask AI
+        if recentCharacters.hasSuffix(queryTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedRewrite)
+            onTrigger(.query)
+            return
+        }
+
+        // Check clean trigger (//)
+        if recentCharacters.hasSuffix(cleanTrigger) {
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatched)
-            onTrigger()
+            onTrigger(.clean)
         }
     }
 
@@ -124,4 +196,7 @@ public enum TriggerMonitorDebugEvent: Sendable {
     case tapReenabled
     case key(String)
     case triggerMatched
+    case triggerMatchedRewrite
+    case triggerMatchedContext
+    case triggerMatchedTranslate
 }

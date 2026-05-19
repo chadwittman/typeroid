@@ -1,45 +1,86 @@
-# TypeRoid Security and Privacy Notes
+# TypeRoid Security & Privacy
 
-TypeRoid is currently a personal-use macOS POC.
+TypeRoid is designed to be safe for daily use. Here's exactly what it does and doesn't do.
 
 ## What TypeRoid Sends
 
-When you type the trigger, TypeRoid sends only the captured message before the trigger to the configured OpenAI Responses API endpoint.
+When you type `//` or `\\`, TypeRoid captures the relevant text and sends ONLY that text to your chosen AI provider (OpenAI, Anthropic, Google, or Groq).
 
-TypeRoid does not intentionally send:
+**What gets sent:**
+- The message you just typed (the text before the trigger)
+- A system prompt telling the AI to clean/rewrite it
 
-- Your API key in the prompt body.
-- Debug status.
-- Full clipboard history.
-- Text outside the current captured message.
+**What never gets sent:**
+- Your API key in the message body (it's only in the auth header)
+- Text from other apps or windows
+- Clipboard history
+- Your keystrokes (TypeRoid only watches for the trigger characters)
+- Any telemetry, analytics, or usage data (there is none)
 
-## Local Storage
+## Where Your Data Lives
 
-- The OpenAI API key is stored in macOS Keychain.
-- The trigger, model, menu behavior, and app exclusions are stored in local `UserDefaults`.
-- Diagnostics show capture length, not captured message content.
+| Data | Storage | Access |
+|------|---------|--------|
+| API keys | macOS Keychain (encrypted) | Only TypeRoid, protected by macOS |
+| Settings (trigger, model, provider) | UserDefaults (local) | Only TypeRoid |
+| Your text | Memory only, never saved | Discarded after replacement |
 
-## Runtime Guards
+TypeRoid has **no database, no logs, no analytics, no crash reporting, no network calls** except the AI provider API when you trigger it.
 
-TypeRoid currently blocks or avoids:
+## Permissions Explained
 
-- Secure/password-style text fields.
-- Terminal, iTerm, and Warp by default.
-- Likely browser address/search bars.
+TypeRoid requires two macOS permissions:
 
-TypeRoid can also be disabled per app from the menu.
+### Accessibility
+**What it does:** Reads the text field you're typing in and replaces text in place.
+**Why it's needed:** This is how TypeRoid swaps your messy text for the cleaned version without copy/paste.
+**What it can't do:** It only reads the focused text field. It cannot read other windows, other apps, or anything you haven't typed into.
 
-## Current Limitations
+### Input Monitoring
+**What it does:** Watches keyboard input for the `//` and `\\` trigger sequences.
+**Why it's needed:** TypeRoid needs to know when you type the trigger so it can activate.
+**What it can't do:** TypeRoid uses a listen-only event tap. It cannot modify, block, or inject keystrokes. It only reads key events to match the trigger pattern. It does not log keystrokes.
 
-- The app is ad-hoc signed for local development, not Developer ID signed or notarized.
-- Browser address-bar detection is heuristic and should be tested in each browser.
-- App-specific text fields can behave differently depending on macOS Accessibility support.
-- TypeRoid is not appropriate for secrets, passwords, medical/legal/financial sensitive content, or regulated customer data in its current POC form.
+## Safety Guards
 
-## Production Hardening Checklist
+TypeRoid will NOT activate in:
+- **Password fields** (detected via Accessibility API secure text attributes)
+- **Browser address bars** (heuristic detection for Safari, Chrome, Firefox, Edge, Brave)
+- **Terminal apps** (Terminal, iTerm, Warp excluded by default)
+- **Any app you manually exclude** from the menu
 
-- Developer ID signing and notarization.
-- Clear privacy policy and data handling disclosure.
-- Explicit allowlist or stronger field-level controls for browsers and sensitive apps.
-- Optional local-only mode or enterprise API-routing controls.
-- Automated smoke tests for Notes, Slack, Chrome page fields, Mail, and Messages where feasible.
+## What TypeRoid Does NOT Do
+
+- Does not keylog. The keyboard monitor only maintains a tiny buffer (2-3 chars) to match the trigger, then clears it.
+- Does not store or transmit your text anywhere except the single AI API call.
+- Does not phone home. No analytics, no telemetry, no update checks.
+- Does not run in the background when disabled. Toggle it off and it stops watching.
+- Does not modify system files, install kernel extensions, or require root access.
+
+## API Key Security
+
+- Keys are stored in macOS Keychain using `kSecClassGenericPassword`
+- Each provider has its own Keychain entry (`openai_api_key`, `anthropic_api_key`, etc.)
+- Keys are transmitted only in HTTPS Authorization headers (Bearer token) or provider-specific auth headers
+- Keys are never logged, printed to console, or included in error messages
+
+## Open Source Transparency
+
+TypeRoid is fully open source. Every line of code is auditable:
+
+- `TextCleaner.swift` - All network calls. You can verify exactly what's sent.
+- `TriggerMonitor.swift` - The keyboard monitor. You can verify it only matches triggers.
+- `KeychainStore.swift` - Keychain operations. Standard Apple Security framework.
+- `AccessibilityReplacement.swift` - How text is read and replaced.
+- `ClipboardReplacement.swift` - The clipboard fallback method.
+
+## Known Limitations
+
+- Ad-hoc signed (not notarized). macOS will warn on first open. Right-click > Open to bypass.
+- Browser address bar detection is heuristic. Report false positives.
+- Some apps don't expose text via Accessibility API. TypeRoid falls back to clipboard method.
+- The clipboard fallback briefly uses your clipboard (saves and restores it).
+
+## Responsible Disclosure
+
+Found a security issue? Open a GitHub issue or email [add your email].

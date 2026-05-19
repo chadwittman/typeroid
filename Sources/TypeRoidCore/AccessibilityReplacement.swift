@@ -66,7 +66,7 @@ public enum AccessibilityReplacement {
         return blockedPhrases.contains { metadata.contains($0) }
     }
 
-    public static func captureCurrentMessageBeforeTrigger(trigger: String) throws -> AccessibilityCapturedText {
+    public static func captureCurrentMessageBeforeTrigger(trigger: String, fullCapture: Bool = false) throws -> AccessibilityCapturedText {
         let element = try focusedElement()
         guard !isSecureTextEntry(element) else {
             throw AccessibilityReplacementError.secureTextField
@@ -82,7 +82,7 @@ public enum AccessibilityReplacement {
             throw AccessibilityReplacementError.unsupportedElement
         }
 
-        let plan = try replacementPlan(in: value, trigger: trigger)
+        let plan = try replacementPlan(in: value, trigger: trigger, fullCapture: fullCapture)
 
         return AccessibilityCapturedText(
             text: plan.text,
@@ -156,7 +156,10 @@ public enum AccessibilityReplacement {
         }
     }
 
-    static func currentMessageRange(in value: String, endingAt end: String.Index) -> Range<String.Index> {
+    static func currentMessageRange(in value: String, endingAt end: String.Index, fullCapture: Bool = false) -> Range<String.Index> {
+        if fullCapture {
+            return value.startIndex..<end
+        }
         let prefix = value[..<end]
         if let paragraphBreak = prefix.range(of: "\n\n", options: .backwards) {
             return paragraphBreak.upperBound..<end
@@ -164,12 +167,12 @@ public enum AccessibilityReplacement {
         return value.startIndex..<end
     }
 
-    static func replacementPlan(in value: String, trigger: String) throws -> AccessibilityReplacementPlan {
+    static func replacementPlan(in value: String, trigger: String, fullCapture: Bool = false) throws -> AccessibilityReplacementPlan {
         guard let triggerRange = value.range(of: trigger, options: .backwards) else {
             throw AccessibilityReplacementError.triggerNotFound
         }
 
-        let messageRange = currentMessageRange(in: value, endingAt: triggerRange.lowerBound)
+        let messageRange = currentMessageRange(in: value, endingAt: triggerRange.lowerBound, fullCapture: fullCapture)
         let message = String(value[messageRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else {
             throw AccessibilityReplacementError.emptyMessage
