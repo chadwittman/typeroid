@@ -208,6 +208,30 @@ public enum AccessibilityReplacement {
             throw AccessibilityReplacementError.triggerNotFound
         }
 
+        // Don't fire // inside URL schemes (http://, https://, ftp://, etc.)
+        // The character immediately before // would be ':' in any URL scheme.
+        if trigger == "//" {
+            let before = value[..<triggerRange.lowerBound]
+            if before.last == ":" {
+                throw AccessibilityReplacementError.triggerNotFound
+            }
+        }
+
+        // Don't fire == when it looks like a code equality check:
+        // preceded by a non-space char and followed by another '=' or space+value
+        // (simple guard: skip if the char before == is alphanumeric or ) or ]  )
+        if trigger == "==" {
+            let before = value[..<triggerRange.lowerBound]
+            if let lastChar = before.last, lastChar.isLetter || lastChar.isNumber || lastChar == ")" || lastChar == "]" {
+                // Could be code — only proceed if there's meaningful prose before it
+                // (i.e. there's a space somewhere in the last 20 chars, suggesting natural language)
+                let context = String(before.suffix(20))
+                if !context.contains(" ") {
+                    throw AccessibilityReplacementError.triggerNotFound
+                }
+            }
+        }
+
         let messageRange = currentMessageRange(in: value, endingAt: triggerRange.lowerBound, fullCapture: fullCapture)
         let message = String(value[messageRange]).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else {
