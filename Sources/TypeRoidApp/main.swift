@@ -1185,7 +1185,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             case 4:
                 let r = await onboarding.show(step: .init(
                     title: "Input Monitoring",
-                    body: "typeROID needs this to detect when you type // or ??.\n\nClick below to open Settings, then:\n1. Click the + button\n2. Go to Applications, find TypeRoid\n3. Click Open to add it\n4. Make sure the toggle is on",
+                    body: "typeROID needs this to detect your triggers.\n\nUnlike Accessibility, macOS won't prompt you — you have to add it manually.\n\nClick \"Open Input Monitoring\" below, then:\n1. Click the + button\n2. Go to Applications → typeROID\n3. Click Open\n4. Make sure the toggle is on",
                     buttonTitles: ["Open Input Monitoring", "Skip"],
                     showBack: true
                 ))
