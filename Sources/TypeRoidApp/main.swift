@@ -359,6 +359,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         transItem.submenu = transMenu
         settingsMenu.addItem(transItem)
 
+        // Translation proof (back-translate to verify)
+        let proofItem = NSMenuItem(title: ";; Translation proof", action: #selector(toggleBackTranslate), keyEquivalent: "")
+        proofItem.target = self
+        proofItem.state = Settings.backTranslateEnabled ? .on : .off
+        settingsMenu.addItem(proofItem)
+
         // API Key
         let apiKeyItem = NSMenuItem(title: "API Key...", action: #selector(setAPIKeyAction), keyEquivalent: "")
         apiKeyItem.target = self; settingsMenu.addItem(apiKeyItem)
@@ -538,6 +544,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         guard let l = sender.representedObject as? String else { return }
         Settings.translateTarget = l; buildMenu()
         status.show(";; -> \(l)")
+    }
+    @objc private func toggleBackTranslate() {
+        Settings.backTranslateEnabled.toggle()
+        buildMenu()
+        status.show(Settings.backTranslateEnabled ? ";; proof on" : ";; proof off")
     }
     @objc private func setAPIKeyAction() {
         if let key = askForAPIKey(provider: Settings.provider) {
@@ -1068,9 +1079,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     status.show("looks good"); return true
                 }
             }
-            try AccessibilityReplacement.replaceCapturedText(captured, with: cleaned)
-            setReplacement(ReplacementRecord(original: captured.text, replacement: cleaned, accessibilityCaptured: captured))
-            status.show("done")
+            // Translation proof: back-translate so the user can verify quality
+            var final = cleaned
+            if mode == .translate && Settings.backTranslateEnabled {
+                status.show(";; proofing...", resetAfter: nil)
+                let backLang = Settings.language
+                let proof = (try? await TextCleaner.process(cleaned, mode: .translate, translateTarget: backLang)) ?? ""
+                if !proof.isEmpty {
+                    final = "\(cleaned)\n\n↩ proof: \(proof)"
+                }
+            }
+            try AccessibilityReplacement.replaceCapturedText(captured, with: final)
+            setReplacement(ReplacementRecord(original: captured.text, replacement: final, accessibilityCaptured: captured))
+            status.show(mode == .translate && Settings.backTranslateEnabled ? ";; done + proofed" : "done")
             return true
         } catch is AccessibilityReplacementError { stopInlineLoading(); return false }
     }

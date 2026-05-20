@@ -209,14 +209,14 @@ public enum TextCleaner {
             .sorted()
     }
 
-    public static func process(_ text: String, mode: CleanMode = .clean) async throws -> String {
+    public static func process(_ text: String, mode: CleanMode = .clean, translateTarget: String? = nil) async throws -> String {
         let provider = Settings.provider
         let apiKey = Settings.apiKey(for: provider)
         guard let apiKey, !apiKey.isEmpty else {
             throw TextCleanerError.missingAPIKey
         }
 
-        let targetLang = Settings.translateTarget
+        let targetLang = translateTarget ?? Settings.translateTarget
 
         let instruction: String
         switch mode {

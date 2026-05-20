@@ -111,15 +111,19 @@ public enum Settings {
     }
 
     public static var translateTarget: String {
-        get { UserDefaults.standard.string(forKey: translateTargetKey) ?? "Spanish" }
+        get {
+            let v = UserDefaults.standard.string(forKey: translateTargetKey) ?? "Spanish"
+            // Migrate legacy "Chinese" → "Chinese (Simplified)"
+            return v == "Chinese" ? "Chinese (Simplified)" : v
+        }
         set { UserDefaults.standard.set(newValue, forKey: translateTargetKey) }
     }
 
     // MARK: - Language
     public static let supportedLanguages = [
         "English", "Spanish", "French", "German", "Portuguese", "Italian",
-        "Dutch", "Japanese", "Korean", "Chinese", "Arabic", "Hindi",
-        "Russian", "Polish", "Turkish", "Swedish", "Norwegian", "Danish",
+        "Dutch", "Japanese", "Korean", "Chinese (Simplified)", "Chinese (Traditional)",
+        "Arabic", "Hindi", "Russian", "Polish", "Turkish", "Swedish", "Norwegian", "Danish",
     ]
 
     public static var language: String {
@@ -127,11 +131,19 @@ public enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: languageKey) }
     }
 
+    // MARK: - Translation Proof
+    private static let backTranslateKey = "back_translate_enabled"
+
+    public static var backTranslateEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: backTranslateKey) }
+        set { UserDefaults.standard.set(newValue, forKey: backTranslateKey) }
+    }
+
     // MARK: - Writing Style
     private static let useStyleKey = "use_writing_style"
     private static let webSearchKey = "web_search_enabled"
 
-    public static let currentVersion = "0.1.8"
+    public static let currentVersion = "0.1.9"
     public static let updateCheckURL = "https://raw.githubusercontent.com/typeroid/typeroid/main/version.txt"
 
     public static var webSearchEnabled: Bool {
