@@ -142,7 +142,7 @@ public enum AccessibilityReplacement {
         }
     }
 
-    public static func replaceCapturedText(_ captured: AccessibilityCapturedText, with replacement: String) throws {
+    public static func replaceCapturedText(_ captured: AccessibilityCapturedText, with replacement: String, selectReplacement: Bool = false) throws {
         var updated = captured.fullValue
         updated.replaceSubrange(captured.replaceRange, with: replacement)
 
@@ -154,6 +154,42 @@ public enum AccessibilityReplacement {
         guard result == .success else {
             throw AccessibilityReplacementError.replacementFailed
         }
+
+        if selectReplacement && !replacement.isEmpty {
+            let start = captured.fullValue.distance(from: captured.fullValue.startIndex, to: captured.replaceRange.lowerBound)
+            var cfRange = CFRange(location: start, length: replacement.count)
+            if let axVal = AXValueCreate(AXValueType.cfRange, &cfRange) {
+                AXUIElementSetAttributeValue(captured.element, kAXSelectedTextRangeAttribute as CFString, axVal)
+            }
+        }
+    }
+
+    /// Captures the current cursor position as an empty replace range so callers can
+    /// pass the result to `startInlineLoading` / `replaceCapturedText` without any
+    /// pre-existing text to replace.
+    public static func captureAtCursor() throws -> AccessibilityCapturedText {
+        let element = try focusedElement()
+
+        var rangeObj: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeObj) == .success,
+              let axRangeVal = rangeObj else { throw AccessibilityReplacementError.unsupportedElement }
+
+        var cfRange = CFRange(location: 0, length: 0)
+        AXValueGetValue(axRangeVal as! AXValue, AXValueType.cfRange, &cfRange)
+
+        var valueObj: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueObj) == .success,
+              let currentValue = valueObj as? String else { throw AccessibilityReplacementError.unsupportedElement }
+
+        let cursorOffset = min(cfRange.location, currentValue.count)
+        let cursorIdx = currentValue.index(currentValue.startIndex, offsetBy: cursorOffset)
+        // Empty range at cursor — replaceCapturedText will insert at this position
+        return AccessibilityCapturedText(
+            text: "",
+            element: element,
+            fullValue: currentValue,
+            replaceRange: cursorIdx..<cursorIdx
+        )
     }
 
     static func currentMessageRange(in value: String, endingAt end: String.Index, fullCapture: Bool = false) -> Range<String.Index> {

@@ -47,13 +47,11 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.1.5</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>6</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
-  <key>LSUIElement</key>
-  <true/>
   <key>NSAppleEventsUsageDescription</key>
   <string>TypeRoid uses automation-style keyboard actions to clean and replace text where you type.</string>
   <key>NSInputMonitoringUsageDescription</key>
@@ -72,18 +70,19 @@ DMG="$ROOT/build/typeROID.dmg"
 #   export TYPEROID_APPLE_ID="you@example.com"
 #   export TYPEROID_NOTARY_PASSWORD="xxxx-xxxx-xxxx-xxxx"  # app-specific password
 #   export TYPEROID_TEAM_ID="XXXXXXXXXX"
-DEVELOPER_ID="Developer ID Application: Applum, LLC (P5TCS8AHVW)"
+DEVELOPER_ID="${TYPEROID_DEVELOPER_ID:-Developer ID Application: Applum, LLC (P5TCS8AHVW)}"
+HAS_DEVELOPER_ID=0
+if security find-identity -v -p codesigning 2>/dev/null | grep -Fq "$DEVELOPER_ID"; then
+    HAS_DEVELOPER_ID=1
+fi
 
-if [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${TYPEROID_NOTARY_PASSWORD:-}" ] && [ -n "${TYPEROID_TEAM_ID:-}" ]; then
+if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${TYPEROID_NOTARY_PASSWORD:-}" ] && [ -n "${TYPEROID_TEAM_ID:-}" ]; then
     echo "Signing with Developer ID..."
     codesign --force --deep --options runtime --timestamp \
         --sign "$DEVELOPER_ID" "$APP_DIR"
 
     echo "Building DMG..."
-    bash "$ROOT/scripts/build-dmg.sh"
-
-    echo "Signing DMG..."
-    codesign --sign "$DEVELOPER_ID" "$DMG"
+    SIGNING_IDENTITY="$DEVELOPER_ID" bash "$ROOT/scripts/build-dmg.sh"
 
     echo "Notarizing DMG..."
     xcrun notarytool submit "$DMG" \
@@ -96,9 +95,22 @@ if [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${TYPEROID_NOTARY_PASSWORD:-}" ] && 
     xcrun stapler staple "$DMG"
 
     echo "Done: $DMG (signed + notarized)"
+elif [ "$HAS_DEVELOPER_ID" -eq 1 ]; then
+    echo "Signing with Developer ID..."
+    codesign --force --deep --options runtime --timestamp \
+        --sign "$DEVELOPER_ID" "$APP_DIR"
+
+    echo "Building signed DMG..."
+    SIGNING_IDENTITY="$DEVELOPER_ID" bash "$ROOT/scripts/build-dmg.sh"
+
+    echo "No notarization credentials found."
+    echo "Set TYPEROID_APPLE_ID, TYPEROID_NOTARY_PASSWORD, TYPEROID_TEAM_ID to notarize."
+    echo "Built $DMG (signed, not notarized)"
 else
-    echo "No signing credentials found — using ad-hoc signature."
-    echo "Set TYPEROID_APPLE_ID, TYPEROID_NOTARY_PASSWORD, TYPEROID_TEAM_ID to sign + notarize."
+    echo "No Developer ID identity found — using ad-hoc signature."
+    echo "Set TYPEROID_DEVELOPER_ID or install the Developer ID certificate to sign."
     codesign --force --deep --sign - "$APP_DIR"
-    echo "Built $APP_DIR (unsigned)"
+    echo "Building unsigned DMG..."
+    bash "$ROOT/scripts/build-dmg.sh"
+    echo "Built $DMG (unsigned)"
 fi

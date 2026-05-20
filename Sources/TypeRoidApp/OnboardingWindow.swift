@@ -35,7 +35,7 @@ final class OnboardingWindow {
             w.titlebarAppearsTransparent = true
             w.titleVisibility = .hidden
             w.isMovableByWindowBackground = true
-            w.backgroundColor = .clear
+            w.backgroundColor = NSColor(red: 0.04, green: 0.04, blue: 0.06, alpha: 1)
             w.level = .normal  // let user interact with other windows
             w.center()
             window = w

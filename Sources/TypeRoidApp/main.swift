@@ -93,6 +93,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private var loadingTimer: Timer?
     private var dotCount = 1
+    private var activeTask: Task<Void, Never>?
+    private var cancelMenuItem: NSMenuItem?
+    private var capturedBeforeProcess: AccessibilityCapturedText?
 
     private var appIcon: NSImage? {
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns") {
@@ -289,7 +292,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         let allGood = AXIsProcessTrusted() && (triggerMonitor?.isActive ?? false) && Settings.apiKey != nil
-        let statusText = allGood ? "typeROID  ● ready" : "typeROID  ○ setup needed"
+        let statusText = allGood ? "typeROID \(Settings.currentVersion)  ● ready" : "typeROID \(Settings.currentVersion)  ○ setup needed"
         let statusItem2 = NSMenuItem(title: statusText, action: allGood ? nil : #selector(rerunOnboarding), keyEquivalent: "")
         if !allGood { statusItem2.target = self }
         menu.addItem(statusItem2)
@@ -303,6 +306,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let undo = NSMenuItem(title: "Undo", action: #selector(undoLastRewrite), keyEquivalent: "z")
         undo.target = self
         menu.addItem(undo)
+
+        let cancel = NSMenuItem(title: "Cancel", action: #selector(cancelActiveTask), keyEquivalent: ".")
+        cancel.target = self
+        cancel.isEnabled = activeTask != nil
+        menu.addItem(cancel)
+        cancelMenuItem = cancel
+
+        let demoPad = NSMenuItem(title: "Open Demo Pad", action: #selector(openDemoPad), keyEquivalent: "")
+        demoPad.target = self
+        menu.addItem(demoPad)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -416,6 +429,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         let runSetup = NSMenuItem(title: "Run Setup Again", action: #selector(rerunOnboarding), keyEquivalent: "")
         runSetup.target = self; settingsMenu.addItem(runSetup)
+
+        let uninstall = NSMenuItem(title: "Uninstall typeROID...", action: #selector(uninstallTypeRoid), keyEquivalent: "")
+        uninstall.target = self; settingsMenu.addItem(uninstall)
 
         settingsItem.submenu = settingsMenu
         menu.addItem(settingsItem)
@@ -563,6 +579,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         else { ClipboardReplacement.replaceCurrentSelection(with: r.original) }
         lastReplacement = nil; status.show("Undone!")
     }
+
+    @objc private func cancelActiveTask() {
+        activeTask?.cancel()
+        activeTask = nil
+        cancelMenuItem?.isEnabled = false
+        loadingTimer?.invalidate()
+        loadingTimer = nil
+        if let captured = capturedBeforeProcess {
+            try? AccessibilityReplacement.replaceCapturedText(captured, with: captured.text)
+            capturedBeforeProcess = nil
+        }
+        status.show("Cancelled")
+    }
     @objc private func toggleLastTypingAppExclusion() {
         guard let bid = lastTypingBundleID else { return }
         let exclude = !Settings.isExcluded(bundleID: bid)
@@ -574,6 +603,32 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         status.show("Exclusions reset")
     }
     @objc private func rerunOnboarding() { Settings.onboardingComplete = false; runOnboarding() }
+    @objc private func openDemoPad() {
+        let url = ensureDemoPadFile(overwrite: true)
+        let opened = NSWorkspace.shared.open(url)
+        if !opened {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    private func ensureDemoPadFile(overwrite: Bool) -> URL {
+        let dir = NSHomeDirectory() + "/.typeroid"
+        let path = dir + "/typeROID Demo.txt"
+        if !FileManager.default.fileExists(atPath: dir) {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        }
+        if overwrite || !FileManager.default.fileExists(atPath: path) {
+            try? demoPadText.write(toFile: path, atomically: true, encoding: .utf8)
+        }
+
+        return URL(fileURLWithPath: path)
+    }
+
+    private func revealDemoPadFile(overwrite: Bool) {
+        let url = ensureDemoPadFile(overwrite: overwrite)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+    }
     @objc private func openCommandsFolder() {
         let dir = NSHomeDirectory() + "/.typeroid/commands"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -590,6 +645,39 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
+    @objc private func uninstallTypeRoid() {
+        let alert = makeAlert("Uninstall typeROID?",
+        """
+        This will quit typeROID and remove:
+
+        - the app from Applications
+        - API keys from Keychain
+        - typeROID settings
+        - ~/.typeroid demo, style, and command files
+        - Accessibility and Input Monitoring permission entries
+        """)
+        alert.addButton(withTitle: "Uninstall")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let scriptURL = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("typeROID-uninstall.sh")
+        do {
+            try uninstallScript.write(to: scriptURL, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: scriptURL.path)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [scriptURL.path]
+            try process.run()
+            NSApp.terminate(nil)
+        } catch {
+            let failed = makeAlert("Uninstall failed to start", error.localizedDescription)
+            failed.addButton(withTitle: "OK")
+            failed.runModal()
+        }
+    }
 
     // MARK: - Inline Loading
 
@@ -597,19 +685,23 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let msg = loadingMessages.randomElement() ?? "typeROIDing"
         dotCount = 1
 
-        // Replace text immediately with loading message
         if let captured {
             try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg).")
+        } else {
+            status.show("\\\\ \(msg).", resetAfter: nil)
         }
 
-        // Animate dots: . -> .. -> ... -> . (every 400ms)
         loadingTimer?.invalidate()
         loadingTimer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, let captured else { return }
+                guard let self else { return }
                 self.dotCount = (self.dotCount % 3) + 1
                 let dots = String(repeating: ".", count: self.dotCount)
-                try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg)\(dots)")
+                if let captured {
+                    try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg)\(dots)")
+                } else {
+                    self.status.show("\\\\ \(msg)\(dots)", resetAfter: nil)
+                }
             }
         }
         if let timer = loadingTimer {
@@ -620,6 +712,124 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func stopInlineLoading() {
         loadingTimer?.invalidate()
         loadingTimer = nil
+    }
+
+    private var demoPadText: String {
+        """
+        typeROID demo pad
+        ─────────────────────────────────────────
+
+        Put your cursor at the END of any example line, then type the trigger.
+        typeROID replaces what you typed. No copy-paste. No app switching.
+
+        ─────────────────────────────────────────
+        // — Fix your typing. Works everywhere.
+        ─────────────────────────────────────────
+
+        Place cursor after the text below, type //
+
+        heyy john cn u movee the mtg to tmrw morning
+
+        i wanted to circle back and touch base re the synergy we discussed re q4
+
+        ─────────────────────────────────────────
+        ?? — Ask AI anything. Answer replaces what you typed.
+        ─────────────────────────────────────────
+
+        Place cursor after the question, type ??
+
+        whats 3pm EST in Tokyo
+
+        how many weeks in a quarter
+
+        ─────────────────────────────────────────
+        ;; — Translate. Defaults to Spanish (change in Settings).
+        ─────────────────────────────────────────
+
+        Place cursor after the text, type ;;
+
+        i'll be five minutes late, sorry
+
+        ─────────────────────────────────────────
+        == — Math and unit conversions. Returns just the answer.
+        ─────────────────────────────────────────
+
+        Place cursor after the expression, type ==
+
+        15% of 340
+
+        5ft 11in in cm
+
+        ─────────────────────────────────────────
+        \\\\ — Summarize a thread and draft a reply.
+        ─────────────────────────────────────────
+
+        1. Select and copy the thread below (Cmd+A on just that section, or manually)
+        2. Click somewhere else in this file so your cursor is on a blank line
+        3. Type \\\\
+
+        The summary lands in the text field.
+        Your suggested reply is copied to clipboard — hit Cmd+V to paste it anywhere.
+
+        --- copy this thread ---
+        Sarah: the client pushed launch to next week. not our call.
+        John: that wrecks QA. we had 3 days blocked and now it's compressed into one.
+        Sarah: can anyone figure out if we can actually test in one day?
+        Mike: i can call in the testers but i need budget sign-off first
+        Sarah: @you what do you think we should do here
+        --- end thread ---
+
+        ─────────────────────────────────────────
+        Undo the last rewrite: typeROID menu > Undo
+        Stuck? typeROID menu > Cancel
+        ─────────────────────────────────────────
+        """
+    }
+
+    private var uninstallScript: String {
+        """
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        BUNDLE_ID="com.typeroid.app"
+        KEYCHAIN_SERVICE="com.typeroid.app"
+        HOME_DIR="$HOME"
+
+        sleep 1
+        pkill -x TypeRoid 2>/dev/null || true
+        pkill -x typeROID 2>/dev/null || true
+
+        remove_app_bundle() {
+            local path="$1"
+            [ -e "$path" ] || return 0
+
+            rm -rf "$path" 2>/dev/null && return 0
+
+            osascript \\
+                -e 'on run argv' \\
+                -e 'set appPath to item 1 of argv' \\
+                -e 'do shell script "rm -rf " & quoted form of appPath with administrator privileges' \\
+                -e 'end run' \\
+                "$path"
+        }
+
+        remove_app_bundle "$HOME_DIR/Applications/TypeRoid.app"
+        remove_app_bundle "$HOME_DIR/Applications/typeROID.app"
+        remove_app_bundle "/Applications/TypeRoid.app"
+        remove_app_bundle "/Applications/typeROID.app"
+
+        defaults delete "$BUNDLE_ID" 2>/dev/null || true
+
+        for account in openai_api_key anthropic_api_key google_api_key groq_api_key; do
+            security delete-generic-password -s "$KEYCHAIN_SERVICE" -a "$account" >/dev/null 2>&1 || true
+        done
+
+        tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
+        tccutil reset ListenEvent "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+        rm -rf "$HOME_DIR/.typeroid"
+        rm -f "$0"
+        """
     }
 
     // MARK: - Trigger
@@ -660,15 +870,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func handleTrigger(mode: CleanMode) {
         guard isEnabled else { return }
         updateLastTypingApplication()
-        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
-            status.show("Disabled in \(lastTypingAppName ?? "this app")"); return }
-        guard AXIsProcessTrusted() else { status.show("Need Accessibility permission"); return }
-        guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
-            status.show("Won't touch password fields"); return }
-        guard !AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) else {
-            status.show("Won't touch address bars"); return }
-        guard Settings.apiKey != nil else { status.show("No API key. Set one in the menu."); return }
 
+        // Compute label up front so blocked status messages can include it
         let label: String
         let verb: String
         switch mode {
@@ -680,7 +883,21 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .custom(let name): label = name; verb = "running"
         }
 
-        Task { @MainActor in
+        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
+            status.show("\(label) disabled in \(lastTypingAppName ?? "this app")"); return }
+        guard AXIsProcessTrusted() else { status.show("\(label) needs Accessibility permission"); return }
+        guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
+            status.show("\(label) won't touch password fields"); return }
+        guard !AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) else {
+            status.show("\(label) won't touch address bars"); return }
+        guard Settings.apiKey != nil else { status.show("\(label) no API key — set one in the menu"); return }
+
+        activeTask = Task { @MainActor in
+            defer {
+                self.activeTask = nil
+                self.cancelMenuItem?.isEnabled = false
+            }
+            cancelMenuItem?.isEnabled = true
             // Start rotating loading messages
             var msgIndex = 0
             let loadingTimer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
@@ -692,7 +909,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 }
             }
             RunLoop.main.add(loadingTimer, forMode: .common)
-            status.show("\(label) \(verb)...", resetAfter: nil)
+            let webSearchActive = (mode == .query) && Settings.webSearchEnabled
+                && (Settings.provider == .openai || Settings.provider == .google)
+            let initialStatus = webSearchActive ? "\(label) searching web..." : "\(label) \(verb)..."
+            status.show(initialStatus, resetAfter: nil)
 
             defer { loadingTimer.invalidate() }
 
@@ -712,7 +932,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .custom(let name): trigger = name
                 }
                 try await Task.sleep(for: .milliseconds(80))
-                let fullCapture = mode == .query || mode == .translate
+                let fullCapture = false
                 if try await handleWithAccessibility(trigger: trigger, mode: mode, fullCapture: fullCapture) { return }
 
                 let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
@@ -731,7 +951,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 }
                 ClipboardReplacement.replaceCurrentSelection(with: cleaned)
                 setReplacement(ReplacementRecord(original: captured.text, replacement: cleaned, accessibilityCaptured: nil))
-                status.show("\(label) done")
+                if mode == .query && !Settings.webSearchEnabled {
+                    status.show("?? done  (enable Web Search in Settings for live results)")
+                } else {
+                    status.show("\(label) done")
+                }
             } catch {
                 status.show("\(label) failed")
             }
@@ -740,102 +964,80 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func handleContextMode() async throws {
-        // Clipboard-based context: user copies a thread, types optional instructions, hits \\
         let trigger = Settings.rewriteTrigger
         try await Task.sleep(for: .milliseconds(80))
 
-        // 1. Read clipboard FIRST (this is the context, don't touch it)
+        // Read clipboard first — this is the thread context
         let clipboardContext = NSPasteboard.general.string(forType: .string)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !clipboardContext.isEmpty else {
+            status.show("\\\\ copy a thread first"); status.reset(); return
+        }
 
-        if clipboardContext.isEmpty {
-            status.show("\\\\ copy first")
-            status.reset()
+        // Capture text before \\ using Accessibility — exactly like // does.
+        // captured.text = optional user instruction typed before \\
+        // If nothing was typed before \\, emptyMessage is thrown — handle gracefully.
+        let captured: AccessibilityCapturedText
+        do {
+            captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+        } catch AccessibilityReplacementError.emptyMessage {
+            // Nothing typed before \\: delete trigger, capture cursor position, show inline loading
+            for _ in 0..<trigger.count {
+                let down = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: true)
+                down?.post(tap: .cghidEventTap)
+                let up = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: false)
+                up?.post(tap: .cghidEventTap)
+            }
+            try await Task.sleep(for: .milliseconds(80))
+            let cursorCapture = try? AccessibilityReplacement.captureAtCursor()
+            capturedBeforeProcess = cursorCapture
+            startInlineLoading(in: cursorCapture, fallbackTrigger: trigger)
+            let raw = try await TextCleaner.processWithContext("", threadContext: clipboardContext)
+            stopInlineLoading()
+            capturedBeforeProcess = nil
+            let (summary, reply) = parseContextJSON(raw)
+            let combined = reply.isEmpty ? summary : "\(summary)\n\n— Suggested reply —\n\(reply)"
+            if let cursorCapture {
+                try? AccessibilityReplacement.replaceCapturedText(cursorCapture, with: combined, selectReplacement: true)
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(reply.isEmpty ? raw : reply, forType: .string)
+            status.show("\\\\ reply in clipboard — ⌘V to paste")
             return
         }
 
-        // 2. Delete the trigger chars from the text field
-        // Use backspace simulation (works in Slack and everywhere)
-        for _ in 0..<trigger.count {
-            let backspace = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: true)
-            backspace?.post(tap: .cghidEventTap)
-            let backspaceUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: false)
-            backspaceUp?.post(tap: .cghidEventTap)
-        }
-        try await Task.sleep(for: .milliseconds(50))
-
-        // 3. Try to capture any text the user typed before the trigger
-        var userRequest = ""
-        var accessibilityCaptured: AccessibilityCapturedText?
-
-        do {
-            // Read the text field (trigger already deleted)
-            let system = AXUIElementCreateSystemWide()
-            var focusedRef: AnyObject?
-            if AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success {
-                let element = focusedRef as! AXUIElement
-                var valueRef: AnyObject?
-                if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
-                   let value = valueRef as? String {
-                    userRequest = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-            }
-        }
-
+        // We have a captured range — use inline loading and replace exactly like //
+        capturedBeforeProcess = captured
+        startInlineLoading(in: captured, fallbackTrigger: trigger)
         status.show("\\\\ thinking...", resetAfter: nil)
 
-        // 4. Send to AI with clipboard as context
-        let response = try await TextCleaner.processWithContext(
-            userRequest,
-            threadContext: clipboardContext
-        )
+        let raw = try await TextCleaner.processWithContext(captured.text, threadContext: clipboardContext)
+        stopInlineLoading()
+        capturedBeforeProcess = nil
 
-        // 5. Extract the suggested reply (last paragraph, strip label prefix)
-        let paragraphs = response.components(separatedBy: "\n\n")
-        var suggestedReply = paragraphs.last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? response
-        // Strip common label prefixes the AI might add
-        for prefix in ["SUGGESTED REPLY:", "SUGGESTED REPLY", "Suggested reply:", "Suggested Reply:", "Reply:"] {
-            if suggestedReply.hasPrefix(prefix) {
-                suggestedReply = String(suggestedReply.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
+        let (summary, reply) = parseContextJSON(raw)
+        let combined = reply.isEmpty ? summary : "\(summary)\n\n— Suggested reply —\n\(reply)"
+
+        try AccessibilityReplacement.replaceCapturedText(captured, with: combined, selectReplacement: true)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(reply.isEmpty ? raw : reply, forType: .string)
+        setReplacement(ReplacementRecord(original: captured.text, replacement: combined, accessibilityCaptured: captured))
+        status.show("\\\\ reply in clipboard — ⌘V to paste")
+    }
+
+    private func parseContextJSON(_ raw: String) -> (summary: String, reply: String) {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix("```") {
+            text = text.components(separatedBy: "\n").dropFirst().joined(separator: "\n")
+            if text.hasSuffix("```") { text = String(text.dropLast(3)) }
+            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-
-        // 6. Select all text in the field and replace with response
-        // Select all (Cmd+A) then paste the response
-        let selectAll = CGEvent(keyboardEventSource: nil, virtualKey: 0x00, keyDown: true)  // 'a'
-        selectAll?.flags = .maskCommand
-        selectAll?.post(tap: .cghidEventTap)
-        let selectAllUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x00, keyDown: false)
-        selectAllUp?.flags = .maskCommand
-        selectAllUp?.post(tap: .cghidEventTap)
-        try await Task.sleep(for: .milliseconds(50))
-
-        // Paste the full response
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(response, forType: .string)
-
-        let paste = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: true)  // 'v'
-        paste?.flags = .maskCommand
-        paste?.post(tap: .cghidEventTap)
-        let pasteUp = CGEvent(keyboardEventSource: nil, virtualKey: 0x09, keyDown: false)
-        pasteUp?.flags = .maskCommand
-        pasteUp?.post(tap: .cghidEventTap)
-        try await Task.sleep(for: .milliseconds(300))
-
-        // 7. Now load the suggested reply into clipboard for Cmd+V
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(suggestedReply, forType: .string)
-
-        // 8. Select all the pasted text so user can see it
-        let selectAll2 = CGEvent(keyboardEventSource: nil, virtualKey: 0x00, keyDown: true)
-        selectAll2?.flags = .maskCommand
-        selectAll2?.post(tap: .cghidEventTap)
-        let selectAllUp2 = CGEvent(keyboardEventSource: nil, virtualKey: 0x00, keyDown: false)
-        selectAllUp2?.flags = .maskCommand
-        selectAllUp2?.post(tap: .cghidEventTap)
-
-        setReplacement(ReplacementRecord(original: userRequest, replacement: suggestedReply, accessibilityCaptured: nil))
-        status.show("\\\\ reply copied")
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: String],
+              let summary = json["summary"], let reply = json["reply"] else {
+            return (text, "")
+        }
+        return (summary, reply)
     }
 
     private func setReplacement(_ record: ReplacementRecord) {
@@ -854,8 +1056,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 status.show("nothing to do"); return true
             }
             lastCapturedSummary = "\(captured.text.count) chars"
+            capturedBeforeProcess = captured
             startInlineLoading(in: captured, fallbackTrigger: trigger)
             let cleaned = try await TextCleaner.process(captured.text, mode: mode)
+            capturedBeforeProcess = nil
             stopInlineLoading()
             // Skip "already clean" check for non-clean modes (math, query, translate always change)
             if mode == .clean {
@@ -872,7 +1076,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func debugStatusText() -> String {
-        "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel: \(Settings.model)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
+        let webSearchStatus: String = {
+            guard Settings.webSearchEnabled else { return "off" }
+            let p = Settings.provider
+            if p == .openai || p == .google { return "on (\(p.displayName))" }
+            return "on but \(p.displayName) doesn't support it — switch to OpenAI or Google"
+        }()
+        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
     }
 
     // MARK: - Onboarding
@@ -1141,8 +1351,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 do {
                     let result = try await TextCleaner.process(sample, mode: .clean)
                     _ = await onboarding.show(step: .init(
-                        title: "Clean. Very clean.",
-                        body: "Before:\n\(sample)\n\nAfter:\n\(result)",
+                        title: "Good news.",
+                        body: """
+                        typeROID is talking with your AI platform of choice now.
+
+                        Test input:
+                        \(sample)
+
+                        AI response:
+                        \(result)
+                        """,
                         buttonTitles: ["Nice"]
                     ))
                 } catch {
@@ -1171,6 +1389,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory) // hide from Dock now
         startMonitorWithRetry()
         buildMenu()
+        openDemoPad()
 
     }
 }

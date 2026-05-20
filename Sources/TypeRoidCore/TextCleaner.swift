@@ -80,6 +80,17 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .groq: return ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
         }
     }
+
+    /// Fast model used for ?? queries — separate from the text-cleaning model.
+    /// Needs to handle factual questions well and support web search where applicable.
+    public var queryModel: String {
+        switch self {
+        case .openai: return "gpt-4.1-mini"      // nano doesn't reliably support web_search_preview
+        case .anthropic: return "claude-haiku-4-5-20251001"  // already the fastest
+        case .google: return "gemini-2.0-flash"   // fast + built-in search
+        case .groq: return "llama-3.3-70b-versatile"  // much better factual recall than 8b
+        }
+    }
 }
 
 public enum TextCleaner {
@@ -116,13 +127,11 @@ public enum TextCleaner {
     static let contextInstruction = """
     You are typeROID in context mode. The user copied text (a thread, email, document) to their clipboard and wants help.
 
-    Use smart brevity to respond:
-    1. WHAT'S HAPPENING: One sentence. The bottom line.
-    2. WHY IT MATTERS: One sentence if needed.
-    3. SUGGESTED REPLY: A draft reply they can send. Match the conversation's tone. Keep it tight.
-
-    Write plain text only. No markdown. No headers. No bullet points.
-    The suggested reply should be on its own line at the end, clearly separated.
+    Return ONLY valid JSON — no markdown, no code fences, nothing else:
+    {
+      "summary": "One or two sentences max. What's happening and the bottom line.",
+      "reply": "A ready-to-send draft reply. Match the tone. Keep it tight."
+    }
     """
 
     static let mathInstruction = """
@@ -150,6 +159,7 @@ public enum TextCleaner {
         }
 
         var fullInstruction = contextInstruction
+        fullInstruction += "\nRespond in \(Settings.language)."
         if Settings.useWritingStyle, let style = Settings.loadStyle() {
             fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
         }
@@ -233,22 +243,29 @@ public enum TextCleaner {
         }
 
         var fullInstruction = instruction
+        // Pin response language for all non-translate modes so the AI doesn't mirror locale
+        if mode != .translate {
+            fullInstruction += "\nRespond in \(Settings.language)."
+        }
         if Settings.useWritingStyle, let style = Settings.loadStyle() {
             fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
         }
 
-        let model = Settings.model
+        // ?? uses its own fast model; all other modes use the user-configured model
+        let model = (mode == .query) ? provider.queryModel : Settings.model
         let useWebSearch = (mode == .query) && Settings.webSearchEnabled
+            && (provider == .openai || provider == .google)
+        let timeout: TimeInterval = (mode == .query) ? 12 : 30
 
         switch provider {
         case .openai:
-            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch)
+            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
         case .anthropic:
-            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey)
+            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
         case .google:
-            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch)
+            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
         case .groq:
-            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey)
+            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
         }
     }
 
@@ -258,7 +275,7 @@ public enum TextCleaner {
     }
 
     // MARK: - OpenAI (Responses API)
-    private static func callOpenAI(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false) async throws -> String {
+    private static func callOpenAI(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false, timeout: TimeInterval = requestTimeout) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -276,7 +293,7 @@ public enum TextCleaner {
             body["tools"] = [["type": "web_search_preview"]]
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        configureRequest(&request)
+        request.timeoutInterval = timeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response, data: data)
@@ -300,7 +317,7 @@ public enum TextCleaner {
     }
 
     // MARK: - Anthropic (Messages API)
-    private static func callAnthropic(text: String, instruction: String, model: String, apiKey: String) async throws -> String {
+    private static func callAnthropic(text: String, instruction: String, model: String, apiKey: String, timeout: TimeInterval = requestTimeout) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
@@ -316,7 +333,7 @@ public enum TextCleaner {
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        configureRequest(&request)
+        request.timeoutInterval = timeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response, data: data)
@@ -331,7 +348,7 @@ public enum TextCleaner {
     }
 
     // MARK: - Google (Gemini)
-    private static func callGoogle(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false) async throws -> String {
+    private static func callGoogle(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false, timeout: TimeInterval = requestTimeout) async throws -> String {
         let urlString = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
         var request = URLRequest(url: URL(string: urlString)!)
         request.httpMethod = "POST"
@@ -347,7 +364,7 @@ public enum TextCleaner {
             body["tools"] = [["google_search": [:]]]
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        configureRequest(&request)
+        request.timeoutInterval = timeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response, data: data)
@@ -365,7 +382,7 @@ public enum TextCleaner {
     }
 
     // MARK: - Groq (OpenAI-compatible Chat API)
-    private static func callGroq(text: String, instruction: String, model: String, apiKey: String) async throws -> String {
+    private static func callGroq(text: String, instruction: String, model: String, apiKey: String, timeout: TimeInterval = requestTimeout) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/chat/completions")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
@@ -381,7 +398,7 @@ public enum TextCleaner {
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        configureRequest(&request)
+        request.timeoutInterval = timeout
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try checkHTTPStatus(response, data: data)
