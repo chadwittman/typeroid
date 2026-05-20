@@ -72,6 +72,7 @@ show_icon_preview = False
 
 icon_size = 96
 text_size = 12
+arrange_by = None
 PYEOF
 
 echo "Building DMG at $OUT..."

@@ -1183,9 +1183,31 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 4. Input Monitoring
             case 4:
+                // Poke CGEventTapCreate so macOS auto-adds typeROID to the Input Monitoring
+                // list (with toggle off). Without this, the app only appears after the user
+                // manually adds it via the + button — which is confusing.
+                let probeTap = CGEvent.tapCreate(
+                    tap: .cghidEventTap,
+                    place: .headInsertEventTap,
+                    options: .defaultTap,
+                    eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+                    callback: { _, _, event, _ in Unmanaged.passRetained(event) },
+                    userInfo: nil
+                )
+                if let probeTap { CFMachPortInvalidate(probeTap) }
+
+                let inputMonitoringBody: String
+                if probeTap != nil {
+                    // Permission already granted — tap succeeded
+                    inputMonitoringBody = "typeROID already has Input Monitoring access. You're good.\n\nIf triggers aren't working after setup, check System Settings → Privacy & Security → Input Monitoring and make sure the toggle is on."
+                } else {
+                    // Tap failed — app should now be in the list, toggle just needs flipping
+                    inputMonitoringBody = "typeROID needs this to detect your triggers.\n\nmacOS just added typeROID to the Input Monitoring list — you just need to turn it on.\n\nClick \"Open Input Monitoring\" below, then:\n1. Find typeROID in the list\n2. Turn the toggle on\n\nIf it's not there yet, click the + button → Applications → typeROID → Open."
+                }
+
                 let r = await onboarding.show(step: .init(
                     title: "Input Monitoring",
-                    body: "typeROID needs this to detect your triggers.\n\nUnlike Accessibility, macOS won't prompt you — you have to add it manually.\n\nClick \"Open Input Monitoring\" below, then:\n1. Click the + button\n2. Go to Applications → typeROID\n3. Click Open\n4. Make sure the toggle is on",
+                    body: inputMonitoringBody,
                     buttonTitles: ["Open Input Monitoring", "Skip"],
                     showBack: true
                 ))
