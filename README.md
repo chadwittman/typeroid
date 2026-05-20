@@ -26,27 +26,21 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
 | `==` | Math & conversions | `15% of 340==` |
-| `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply |
+| `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply inline |
 
 ## Install
 
-1. Download `typeROID.zip` from [Releases](../../releases)
-2. Unzip and drag `TypeRoid.app` to your Applications folder
+1. Download `typeROID.dmg` from [Releases](../../releases)
+2. Open the DMG and drag `typeROID.app` to your Applications folder
 3. Open it. Follow the onboarding.
 4. Grant Accessibility and Input Monitoring permissions when prompted
 5. Paste your API key (OpenAI, Claude, Gemini, or Groq)
 6. Type like a goblin
 
-> macOS may block the app since it's not notarized. Run this in Terminal to fix it:
-> ```
-> xattr -cr ~/Applications/TypeRoid.app
-> ```
-> Then open the app normally. You only need to do this once.
-
 ## Build from source
 
 ```bash
-git clone https://github.com/typeroid/typeroid.git
+git clone https://github.com/chadwittman/typeroid.git
 cd typeroid
 swift build -c release
 bash scripts/install-dev-app.sh
@@ -58,12 +52,12 @@ Requires Xcode Command Line Tools and macOS 14+.
 
 typeROID works with any of these AI providers. Bring your own API key.
 
-| Provider | Model | Cost |
-|----------|-------|------|
+| Provider | Default Model | Cost |
+|----------|--------------|------|
 | OpenAI | gpt-4.1-nano | ~$0.001/message |
-| Anthropic (Claude) | claude-haiku-4-5 | ~$0.001/message |
+| Anthropic (Claude) | claude-haiku-4-5-20251001 | ~$0.001/message |
 | Google (Gemini) | gemini-2.0-flash | Free tier available |
-| Groq | llama-3.1-8b | Free tier available |
+| Groq | llama-3.1-8b-instant | Free tier available |
 
 ## Privacy & Security
 
@@ -97,7 +91,7 @@ I say "hey" not "hello". No corporate language.
 4. Sends it to your AI provider with a focused system prompt
 5. Replaces your text in place, in whatever app you're using
 
-For `\\` summarize mode: copy a thread to your clipboard, type `\\`. typeROID reads your clipboard as context and drafts a reply. The reply is copied to your clipboard for Cmd+V.
+For `\\` summarize mode: copy a thread to your clipboard, then type `\\`. typeROID reads your clipboard as context, generates a summary and a draft reply, and drops both inline where you're typing — summary visible, reply loaded to your clipboard for ⌘V.
 
 ## Support
 
