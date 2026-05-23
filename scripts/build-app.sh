@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.9</string>
+  <string>0.2.0</string>
   <key>CFBundleVersion</key>
-  <string>10</string>
+  <string>11</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -95,6 +95,26 @@ if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${T
     xcrun stapler staple "$DMG"
 
     echo "Done: $DMG (signed + notarized)"
+
+    # --- Update Homebrew tap ---
+    VERSION=$(defaults read "$CONTENTS/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "")
+    SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+    TAP_DIR="$HOME/homebrew-typeroid"
+    CASK="$TAP_DIR/Casks/typeroid.rb"
+    if [ -n "$VERSION" ] && [ -d "$TAP_DIR" ]; then
+        sed -i '' "s/^  version \".*\"/  version \"$VERSION\"/" "$CASK"
+        sed -i '' "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" "$CASK"
+        cd "$TAP_DIR"
+        git add Casks/typeroid.rb
+        git commit -m "typeROID $VERSION" 2>/dev/null || true
+        git push 2>/dev/null || true
+        cd "$ROOT"
+        echo "Homebrew tap updated to $VERSION ($SHA)"
+    else
+        echo "Skipping Homebrew tap update (tap not cloned at $TAP_DIR)"
+        echo "  sha256: $SHA"
+    fi
+
 elif [ "$HAS_DEVELOPER_ID" -eq 1 ]; then
     echo "Signing with Developer ID..."
     codesign --force --deep --options runtime --timestamp \
