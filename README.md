@@ -27,15 +27,23 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | `;;` | Translate | `hello how are you doing;;` |
 | `==` | Math & conversions | `15% of 340==` |
 | `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply inline |
+| `\|\|` | Rephrase | Paste canned/corporate text, hit `\|\|`, get it rewritten like a human said it |
 
 ## Install
+
+### Homebrew (recommended)
+
+```bash
+brew install --cask chadwittman/typeroid/typeroid
+```
+
+### Manual
 
 1. Download `typeROID.dmg` from [Releases](../../releases)
 2. Open the DMG and drag `typeROID.app` to your Applications folder
 3. Open it. Follow the onboarding.
-4. Grant Accessibility and Input Monitoring permissions when prompted
-5. Paste your API key (OpenAI, Claude, Gemini, or Groq)
-6. Type like a goblin
+
+After either method: grant Accessibility and Input Monitoring permissions when prompted, then paste your API key (OpenAI, Claude, Gemini, Groq, or run local models with Ollama).
 
 ## Build from source
 
@@ -50,14 +58,17 @@ Requires Xcode Command Line Tools and macOS 14+.
 
 ## Providers
 
-typeROID works with any of these AI providers. Bring your own API key.
+typeROID works with any of these. Bring your own API key — or run fully local with Ollama.
 
 | Provider | Default Model | Cost |
 |----------|--------------|------|
-| OpenAI | gpt-4.1-nano | ~$0.001/message |
+| OpenAI | gpt-4.1-nano | ~$0.0001/message |
 | Anthropic (Claude) | claude-haiku-4-5-20251001 | ~$0.001/message |
 | Google (Gemini) | gemini-2.0-flash | Free tier available |
 | Groq | llama-3.1-8b-instant | Free tier available |
+| Ollama | any local model | Free — runs on your machine |
+
+For Ollama: install [Ollama](https://ollama.com), pull a model (`ollama pull llama3`), then select Ollama in the typeROID menu. No API key needed. Nothing leaves your machine.
 
 ## Privacy & Security
 
@@ -86,7 +97,7 @@ I say "hey" not "hello". No corporate language.
 ## How it works
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
-2. Monitors your keyboard for triggers (`//`, `??`, `;;`, `==`, `\\`)
+2. Monitors your keyboard for triggers (`//`, `??`, `;;`, `==`, `\\`, `||`)
 3. Captures the text via macOS Accessibility API
 4. Sends it to your AI provider with a focused system prompt
 5. Replaces your text in place, in whatever app you're using
