@@ -107,6 +107,10 @@ public final class TriggerMonitor {
         guard length > 0 else { return }
 
         let string = String(utf16CodeUnits: chars, count: length)
+        handleTypedCharacters(string)
+    }
+
+    func handleTypedCharacters(_ string: String) {
         let cleanTrigger = triggerProvider()
         let contextTrigger = contextTriggerProvider()   // \\
         let queryTrigger = queryTriggerProvider()       // ??
@@ -114,7 +118,7 @@ public final class TriggerMonitor {
         let mathTrigger = mathTriggerProvider()         // ==
         let customCommands = customCommandsProvider()
         let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
-        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, maxCustomLen, 1)
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, maxCustomLen, 1) + 1
 
         for character in string {
             if character.isNewline {
@@ -177,11 +181,18 @@ public final class TriggerMonitor {
 
         // Check clean trigger (//)
         if recentCharacters.hasSuffix(cleanTrigger) {
+            guard shouldFireCleanTrigger(cleanTrigger) else { return }
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatched)
             onTrigger(.clean)
         }
+    }
+
+    private func shouldFireCleanTrigger(_ trigger: String) -> Bool {
+        guard trigger == "//" else { return true }
+        let beforeTrigger = recentCharacters.dropLast(trigger.count)
+        return beforeTrigger.last != ":"
     }
 
     private func isCommandShortcut(_ event: CGEvent) -> Bool {
