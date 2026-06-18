@@ -40,7 +40,7 @@ brew install --cask chadwittman/typeroid/typeroid
 ### Update
 
 ```bash
-brew reinstall --cask chadwittman/typeroid/typeroid
+brew reinstall --cask --force chadwittman/typeroid/typeroid
 ```
 
 ### Manual
