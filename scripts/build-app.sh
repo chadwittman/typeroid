@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.12</string>
+  <string>0.2.13</string>
   <key>CFBundleVersion</key>
-  <string>22</string>
+  <string>23</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -102,7 +102,7 @@ if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${T
 
     # --- Update Homebrew tap ---
     VERSION=$(defaults read "$CONTENTS/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "")
-    SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
+    SHA=$(LC_ALL=C LANG=C shasum -a 256 "$DMG" | awk '{print $1}')
     TAP_DIR="$HOME/homebrew-typeroid"
     CASK="$TAP_DIR/Casks/typeroid.rb"
     if [ -n "$VERSION" ] && [ -d "$TAP_DIR" ]; then

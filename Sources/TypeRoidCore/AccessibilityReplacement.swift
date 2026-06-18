@@ -327,11 +327,17 @@ public enum AccessibilityReplacement {
             throw AccessibilityReplacementError.triggerNotFound
         }
 
+        let lineStart = value[..<triggerRange.lowerBound].lastIndex(of: "\n").map { value.index(after: $0) } ?? value.startIndex
+        let linePrefix = value[lineStart..<triggerRange.lowerBound]
+        let replaceStart = linePrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? lineStart
+            : triggerRange.lowerBound
+
         return AccessibilityCapturedText(
             text: "",
             element: element,
             fullValue: value,
-            replaceRange: triggerRange
+            replaceRange: replaceStart..<triggerRange.upperBound
         )
     }
 

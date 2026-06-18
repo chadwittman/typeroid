@@ -23,6 +23,8 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | Trigger | What it does | Example |
 |---------|-------------|---------|
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
+| blank-line `//` | Voice brief | Type `//`, talk, pause; use ` //` if the app steals leading slash commands |
+| `,,` | Voice brief fallback | Use in Codex, Terminal, iTerm2, Warp, or any app with slash commands |
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
 | `==` | Math & conversions | `15% of 340==` |
@@ -105,7 +107,7 @@ I say "hey" not "hello". No corporate language.
 ## How it works
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
-2. Monitors your keyboard for triggers (`//`, `??`, `;;`, `==`, `\\`, `||`)
+2. Monitors your keyboard for triggers (`//`, `,,`, `??`, `;;`, `==`, `\\`, `||`)
 3. Captures the text via macOS Accessibility API
 4. Sends it to your AI provider with a focused system prompt
 5. Replaces your text in place, in whatever app you're using

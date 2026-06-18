@@ -188,6 +188,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             queryTriggerProvider: { Settings.contextTrigger },
             translateTriggerProvider: { Settings.translateTrigger },
             mathTriggerProvider: { Settings.mathTrigger },
+            voiceTriggerProvider: { Settings.voiceTrigger },
             onDebugEvent: { [weak self] event in Task { @MainActor in self?.handleDebugEvent(event) } }
         ) { [weak self] mode in Task { @MainActor in self?.handleTrigger(mode: mode) } }
         triggerMonitor?.start()
@@ -916,6 +917,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .triggerMatchedRewrite: lastTriggerDebug = "?? matched"
         case .triggerMatchedContext: lastTriggerDebug = "\\\\ matched"
         case .triggerMatchedTranslate: lastTriggerDebug = ";; matched"
+        case .triggerMatchedVoice: lastTriggerDebug = "\(Settings.voiceTrigger) matched"
         }
         refreshDebugMenuItems()
     }
@@ -1007,7 +1009,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .translate: trigger = Settings.translateTrigger
                 case .math: trigger = Settings.mathTrigger
                 case .rephrase: trigger = Settings.rephraseTrigger
-                case .smartBrevity: trigger = Settings.trigger
+                case .smartBrevity: trigger = voiceBriefTriggerForFocusedElement()
                 case .context: trigger = Settings.rewriteTrigger
                 case .custom(let name): trigger = name
                 }
@@ -1115,6 +1117,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             return try await WhisperDictation().transcribe()
         }
         return try await VoiceDictation().transcribe()
+    }
+
+    private func voiceBriefTriggerForFocusedElement() -> String {
+        if (try? AccessibilityReplacement.captureTriggerOnly(trigger: Settings.voiceTrigger)) != nil {
+            return Settings.voiceTrigger
+        }
+        return Settings.trigger
     }
 
     private func processCapturedText(_ captured: AccessibilityCapturedText, mode: CleanMode, label: String) async throws -> Bool {
@@ -1268,7 +1277,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             if p == .openai || p == .google { return "on (\(p.displayName))" }
             return "on but \(p.displayName) doesn't support it — switch to OpenAI or Google"
         }()
-        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
+        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nVoice trigger: \(Settings.voiceTrigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
     }
 
     private func requestVoicePermissionsAndOpenSettingsIfNeeded() async {

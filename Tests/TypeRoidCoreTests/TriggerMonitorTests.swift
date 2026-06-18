@@ -53,6 +53,47 @@ import Testing
     #expect(modes == [.smartBrevity])
 }
 
+@Test func triggerMonitorFiresVoiceBriefForWhitespaceCleanTrigger() {
+    var modes: [CleanMode] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        customCommandsProvider: { [] },
+        onTrigger: { modes.append($0) }
+    )
+
+    monitor.handleTypedCharacters(" //")
+
+    #expect(modes == [.smartBrevity])
+}
+
+@Test func triggerMonitorFiresVoiceBriefForVoiceTrigger() {
+    var modes: [CleanMode] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        voiceTriggerProvider: { ",," },
+        customCommandsProvider: { [] },
+        onTrigger: { modes.append($0) }
+    )
+
+    monitor.handleTypedCharacters(",,")
+
+    #expect(modes == [.smartBrevity])
+}
+
+@Test func triggerMonitorIgnoresVoiceTriggerAfterText() {
+    var modes: [CleanMode] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        voiceTriggerProvider: { ",," },
+        customCommandsProvider: { [] },
+        onTrigger: { modes.append($0) }
+    )
+
+    monitor.handleTypedCharacters("do not voice ,,")
+
+    #expect(modes.isEmpty)
+}
+
 @Test func triggerMonitorStillFiresCleanTriggerAfterText() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(

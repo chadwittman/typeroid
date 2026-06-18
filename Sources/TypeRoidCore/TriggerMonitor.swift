@@ -10,6 +10,7 @@ public final class TriggerMonitor {
     private let translateTriggerProvider: () -> String  // ;; (translate)
     private let mathTriggerProvider: () -> String       // == (math)
     private let rephraseTriggerProvider: () -> String   // || (rephrase/de-corp)
+    private let voiceTriggerProvider: () -> String      // ,, (voice brief)
     private let customCommandsProvider: () -> [String]  // available ..commands
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
@@ -26,6 +27,7 @@ public final class TriggerMonitor {
         translateTriggerProvider: @escaping () -> String = { Settings.translateTrigger },
         mathTriggerProvider: @escaping () -> String = { Settings.mathTrigger },
         rephraseTriggerProvider: @escaping () -> String = { Settings.rephraseTrigger },
+        voiceTriggerProvider: @escaping () -> String = { Settings.voiceTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
         onTrigger: @escaping (CleanMode) -> Void
@@ -36,6 +38,7 @@ public final class TriggerMonitor {
         self.translateTriggerProvider = translateTriggerProvider
         self.mathTriggerProvider = mathTriggerProvider
         self.rephraseTriggerProvider = rephraseTriggerProvider
+        self.voiceTriggerProvider = voiceTriggerProvider
         self.customCommandsProvider = customCommandsProvider
         self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
@@ -120,9 +123,10 @@ public final class TriggerMonitor {
         let translateTrigger = translateTriggerProvider() // ;;
         let mathTrigger = mathTriggerProvider()           // ==
         let rephraseTrigger = rephraseTriggerProvider()   // ||
+        let voiceTrigger = voiceTriggerProvider()         // ,,
         let customCommands = customCommandsProvider()
         let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
-        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, maxCustomLen, 1) + 1
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, voiceTrigger.count, maxCustomLen, 1) + 256
 
         for character in string {
             if character.isNewline {
@@ -192,15 +196,30 @@ public final class TriggerMonitor {
             return
         }
 
+        // Check voice-only trigger (,,)
+        if recentCharacters.hasSuffix(voiceTrigger), isBlankLineTrigger(voiceTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedVoice)
+            onTrigger(.smartBrevity)
+            return
+        }
+
         // Check clean trigger (//)
         if recentCharacters.hasSuffix(cleanTrigger) {
             guard shouldFireCleanTrigger(cleanTrigger) else { return }
-            let mode: CleanMode = recentCharacters == cleanTrigger ? .smartBrevity : .clean
+            let mode: CleanMode = isBlankLineTrigger(cleanTrigger) ? .smartBrevity : .clean
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatched)
             onTrigger(mode)
         }
+    }
+
+    private func isBlankLineTrigger(_ trigger: String) -> Bool {
+        guard recentCharacters.hasSuffix(trigger) else { return false }
+        let beforeTrigger = recentCharacters.dropLast(trigger.count)
+        return beforeTrigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func shouldFireCleanTrigger(_ trigger: String) -> Bool {
@@ -224,4 +243,5 @@ public enum TriggerMonitorDebugEvent: Sendable {
     case triggerMatchedRewrite
     case triggerMatchedContext
     case triggerMatchedTranslate
+    case triggerMatchedVoice
 }

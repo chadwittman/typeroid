@@ -21,6 +21,10 @@ struct SettingsTests {
         #expect(Settings.rewriteTrigger == "\\\\")
     }
 
+    @Test func defaultVoiceTriggerIsDoubleComma() {
+        #expect(Settings.voiceTrigger == ",,")
+    }
+
     @Test func knownBrowsersAreTrackedForAddressBarSafety() {
         #expect(Settings.browserBundleIDs.contains("com.google.Chrome"))
         #expect(Settings.browserBundleIDs.contains("com.apple.Safari"))
