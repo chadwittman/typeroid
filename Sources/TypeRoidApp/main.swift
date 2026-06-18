@@ -758,7 +758,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         if let captured {
             try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg).")
         } else {
-            status.show("\\\\ \(msg).", resetAfter: nil)
+            status.show("\(fallbackTrigger) \(msg).", resetAfter: nil)
         }
 
         loadingTimer?.invalidate()
@@ -770,7 +770,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 if let captured {
                     try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg)\(dots)")
                 } else {
-                    self.status.show("\\\\ \(msg)\(dots)", resetAfter: nil)
+                    self.status.show("\(fallbackTrigger) \(msg)\(dots)", resetAfter: nil)
                 }
             }
         }
@@ -978,23 +978,28 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 self.cancelMenuItem?.isEnabled = false
             }
             cancelMenuItem?.isEnabled = true
-            // Start rotating loading messages
-            var msgIndex = 0
-            let loadingTimer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self else { return }
-                    let msg = self.loadingMessages[msgIndex % self.loadingMessages.count]
-                    self.status.show("\(label) \(msg)...", resetAfter: nil)
-                    msgIndex += 1
+            let loadingTimer: Timer?
+            if mode == .smartBrevity {
+                loadingTimer = nil
+            } else {
+                var msgIndex = 0
+                let timer = Timer(timeInterval: 3.0, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        let msg = self.loadingMessages[msgIndex % self.loadingMessages.count]
+                        self.status.show("\(label) \(msg)...", resetAfter: nil)
+                        msgIndex += 1
+                    }
                 }
+                RunLoop.main.add(timer, forMode: .common)
+                loadingTimer = timer
             }
-            RunLoop.main.add(loadingTimer, forMode: .common)
             let webSearchActive = (mode == .query) && Settings.webSearchEnabled
                 && (Settings.provider == .openai || Settings.provider == .google)
             let initialStatus = webSearchActive ? "\(label) searching web..." : "\(label) \(verb)..."
             status.show(initialStatus, resetAfter: nil)
 
-            defer { loadingTimer.invalidate() }
+            defer { loadingTimer?.invalidate() }
 
             do {
                 if mode == .context {
@@ -1068,12 +1073,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func handleVoiceBriefMode(captured: AccessibilityCapturedText?, fallbackTrigger: String) async throws {
         capturedBeforeProcess = captured
         let deleteCount = voiceTriggerDeleteCount(captured: captured, fallbackTrigger: fallbackTrigger)
-        status.show("// listening...", resetAfter: nil)
+        status.show("listening...", resetAfter: nil)
 
         do {
-            let transcript = try await transcribeVoice()
+            let transcript = try await transcribeVoice(trigger: fallbackTrigger)
             lastCapturedSummary = "\(transcript.count) voice chars"
-            status.show("// tightening...", resetAfter: nil)
+            status.show("// cooking transcript...", resetAfter: nil)
+            startInlineLoading(in: nil, fallbackTrigger: fallbackTrigger)
+            defer { stopInlineLoading() }
 
             let brief = try await TextCleaner.process(transcript, mode: .smartBrevity)
             capturedBeforeProcess = nil
@@ -1092,11 +1099,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func transcribeVoice() async throws -> String {
-        if WhisperDictation.isConfigured {
-            return try await WhisperDictation().transcribe()
+    private func transcribeVoice(trigger: String) async throws -> String {
+        let volumeDucker = OutputVolumeDucker()
+        defer { volumeDucker.restore() }
+
+        let onRecordingFinished: @MainActor () -> Void = { [weak self] in
+            volumeDucker.restore()
+            self?.status.show("\(trigger) transcribing...", resetAfter: nil)
         }
-        return try await VoiceDictation().transcribe()
+
+        if WhisperDictation.isConfigured {
+            return try await WhisperDictation().transcribe(onRecordingFinished: onRecordingFinished)
+        }
+        return try await VoiceDictation().transcribe(onRecordingFinished: onRecordingFinished)
     }
 
     private func voiceBriefTriggerForFocusedElement() -> String {

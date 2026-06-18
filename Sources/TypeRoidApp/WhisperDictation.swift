@@ -48,7 +48,11 @@ final class WhisperDictation {
         runtimeURL != nil && modelURL != nil
     }
 
-    func transcribe(maxDuration: TimeInterval = 180, silenceAfter: TimeInterval = 2.2) async throws -> String {
+    func transcribe(
+        maxDuration: TimeInterval = 180,
+        silenceAfter: TimeInterval = 2.2,
+        onRecordingFinished: (@MainActor () -> Void)? = nil
+    ) async throws -> String {
         guard await VoiceDictation.requestMicrophonePermission() else {
             throw WhisperDictationError.microphoneDenied
         }
@@ -69,6 +73,7 @@ final class WhisperDictation {
         }
 
         try await record(to: recordingURL, maxDuration: maxDuration, silenceAfter: silenceAfter)
+        await onRecordingFinished?()
         return try runWhisper(runtimeURL: runtimeURL, modelURL: modelURL, audioURL: recordingURL, outputBaseURL: outputBaseURL)
     }
 

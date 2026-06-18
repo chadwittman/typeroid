@@ -32,7 +32,11 @@ final class VoiceDictation: @unchecked Sendable {
     private var recognitionError: Error?
     private var recognitionFinished = false
 
-    func transcribe(maxDuration: TimeInterval = 180, silenceAfter: TimeInterval = 2.2) async throws -> String {
+    func transcribe(
+        maxDuration: TimeInterval = 180,
+        silenceAfter: TimeInterval = 2.2,
+        onRecordingFinished: (@MainActor () -> Void)? = nil
+    ) async throws -> String {
         try await Self.requestPermissions()
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Settings.languageLocaleIdentifier)),
@@ -89,13 +93,16 @@ final class VoiceDictation: @unchecked Sendable {
             let trimmed = bestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
             if recognitionFinished {
                 guard !trimmed.isEmpty else { throw VoiceDictationError.noSpeech }
+                await onRecordingFinished?()
                 return trimmed
             }
             if Date().timeIntervalSince(started) >= maxDuration {
                 guard !trimmed.isEmpty else { throw VoiceDictationError.noSpeech }
+                await onRecordingFinished?()
                 return trimmed
             }
             if !trimmed.isEmpty && Date().timeIntervalSince(lastVoiceTime) >= silenceAfter {
+                await onRecordingFinished?()
                 return trimmed
             }
         }
