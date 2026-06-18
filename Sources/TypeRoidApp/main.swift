@@ -957,7 +957,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .custom(let name): label = name; verb = "running"
         }
 
-        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
+        let isExcluded = Settings.isExcluded(bundleID: lastTypingBundleID)
+        let isDefaultTerminalExclusion = lastTypingBundleID.map(Settings.defaultExcludedBundleIDs.contains) ?? false
+        let allowVoiceInTerminal = mode == .smartBrevity && isDefaultTerminalExclusion
+        guard !isExcluded || allowVoiceInTerminal else {
             status.show("\(label) disabled in \(lastTypingAppName ?? "this app")"); return }
         guard AXIsProcessTrusted() else { status.show("\(label) needs Accessibility permission"); return }
         guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
@@ -1009,6 +1012,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .custom(let name): trigger = name
                 }
                 try await Task.sleep(for: .milliseconds(80))
+                if mode == .smartBrevity {
+                    let captured = try? AccessibilityReplacement.captureTriggerOnly(trigger: trigger)
+                    try await handleVoiceBriefMode(captured: captured, fallbackTrigger: trigger)
+                    return
+                }
                 if mode == .clean, try await handleCleanOrVoiceMode(trigger: trigger) { return }
 
                 let fullCapture = false

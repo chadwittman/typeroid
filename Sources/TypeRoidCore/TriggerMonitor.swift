@@ -195,10 +195,11 @@ public final class TriggerMonitor {
         // Check clean trigger (//)
         if recentCharacters.hasSuffix(cleanTrigger) {
             guard shouldFireCleanTrigger(cleanTrigger) else { return }
+            let mode: CleanMode = recentCharacters == cleanTrigger ? .smartBrevity : .clean
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatched)
-            onTrigger(.clean)
+            onTrigger(mode)
         }
     }
 
