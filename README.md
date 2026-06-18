@@ -43,6 +43,8 @@ brew install --cask chadwittman/typeroid/typeroid
 brew reinstall --cask --force chadwittman/typeroid/typeroid
 ```
 
+The Homebrew cask also installs `whisper-cpp` and downloads the local Whisper model used by voice brief mode.
+
 ### Manual
 
 1. Download `typeROID.dmg` from [Releases](../../releases)
