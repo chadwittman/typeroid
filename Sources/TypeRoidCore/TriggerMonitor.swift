@@ -196,8 +196,9 @@ public final class TriggerMonitor {
             return
         }
 
-        // Check voice-only trigger (,,)
-        if recentCharacters.hasSuffix(voiceTrigger), isBlankLineTrigger(voiceTrigger) {
+        // Check voice-only trigger (,,). This intentionally fires anywhere so
+        // app composers with stale/inaccessible line state can still start voice.
+        if recentCharacters.hasSuffix(voiceTrigger) {
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatchedVoice)

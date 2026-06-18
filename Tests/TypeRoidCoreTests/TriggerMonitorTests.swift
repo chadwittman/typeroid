@@ -80,7 +80,7 @@ import Testing
     #expect(modes == [.smartBrevity])
 }
 
-@Test func triggerMonitorIgnoresVoiceTriggerAfterText() {
+@Test func triggerMonitorFiresVoiceTriggerAfterText() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
@@ -91,7 +91,7 @@ import Testing
 
     monitor.handleTypedCharacters("do not voice ,,")
 
-    #expect(modes.isEmpty)
+    #expect(modes == [.smartBrevity])
 }
 
 @Test func triggerMonitorStillFiresCleanTriggerAfterText() {
