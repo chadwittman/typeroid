@@ -120,7 +120,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let appPath = Bundle.main.bundlePath
         let inApplications = appPath.hasPrefix("/Applications") || appPath.hasPrefix(NSHomeDirectory() + "/Applications")
 
-        let needsSetup = !Settings.onboardingComplete || Settings.apiKey == nil
+        let needsSetup = !Settings.onboardingComplete || (Settings.provider.requiresAPIKey && Settings.apiKey == nil)
         if needsSetup {
             NSApp.setActivationPolicy(.regular)
             Task { @MainActor in
@@ -291,7 +291,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
 
-        let allGood = AXIsProcessTrusted() && (triggerMonitor?.isActive ?? false) && Settings.apiKey != nil
+        let allGood = AXIsProcessTrusted() && (triggerMonitor?.isActive ?? false) && (!Settings.provider.requiresAPIKey || Settings.apiKey != nil)
         let statusText = allGood ? "typeROID \(Settings.currentVersion)  ● ready" : "typeROID \(Settings.currentVersion)  ○ setup needed"
         let statusItem2 = NSMenuItem(title: statusText, action: allGood ? nil : #selector(rerunOnboarding), keyEquivalent: "")
         if !allGood { statusItem2.target = self }
@@ -365,9 +365,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         proofItem.state = Settings.backTranslateEnabled ? .on : .off
         settingsMenu.addItem(proofItem)
 
-        // API Key
-        let apiKeyItem = NSMenuItem(title: "API Key...", action: #selector(setAPIKeyAction), keyEquivalent: "")
-        apiKeyItem.target = self; settingsMenu.addItem(apiKeyItem)
+        // API Key (hidden for Ollama)
+        if Settings.provider.requiresAPIKey {
+            let apiKeyItem = NSMenuItem(title: "API Key...", action: #selector(setAPIKeyAction), keyEquivalent: "")
+            apiKeyItem.target = self; settingsMenu.addItem(apiKeyItem)
+        } else {
+            let ollamaItem = NSMenuItem(title: "Ollama: local (no key needed)", action: nil, keyEquivalent: "")
+            ollamaItem.isEnabled = false; settingsMenu.addItem(ollamaItem)
+            let refreshItem = NSMenuItem(title: "Refresh Ollama Models", action: #selector(refreshOllamaModels), keyEquivalent: "")
+            refreshItem.target = self; settingsMenu.addItem(refreshItem)
+        }
 
         let testItem = NSMenuItem(title: "Test API", action: #selector(testCleanupAPI), keyEquivalent: "")
         testItem.target = self; settingsMenu.addItem(testItem)
@@ -425,6 +432,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         acc.target = self; settingsMenu.addItem(acc)
         let inp = NSMenuItem(title: "Input Monitoring", action: #selector(openInputMonitoringSettings), keyEquivalent: "")
         inp.target = self; settingsMenu.addItem(inp)
+        let mic = NSMenuItem(title: "Microphone Settings", action: #selector(openMicrophoneSettings), keyEquivalent: "")
+        mic.target = self; settingsMenu.addItem(mic)
+        let speech = NSMenuItem(title: "Speech Recognition Settings", action: #selector(openSpeechRecognitionSettings), keyEquivalent: "")
+        speech.target = self; settingsMenu.addItem(speech)
+        let dictation = NSMenuItem(title: "Keyboard Dictation Settings", action: #selector(openKeyboardDictationSettings), keyEquivalent: "")
+        dictation.target = self; settingsMenu.addItem(dictation)
 
         settingsMenu.addItem(NSMenuItem.separator())
 
@@ -499,7 +512,43 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             if alert.runModal() != .alertFirstButtonReturn { return }
         }
 
+        if p == .ollama {
+            Settings.provider = p
+            Settings.model = Settings.cachedOllamaModels.first ?? p.defaultModel
+            buildMenu()
+            Task { @MainActor in
+                status.show("checking Ollama...", resetAfter: nil)
+                let running = await TextCleaner.isOllamaRunning()
+                if running {
+                    let models = await TextCleaner.fetchOllamaModels()
+                    if !models.isEmpty {
+                        Settings.cachedOllamaModels = models
+                        Settings.model = models.first ?? p.defaultModel
+                    }
+                    status.show("Ollama ready")
+                } else {
+                    status.show("Ollama not running — start with: ollama serve")
+                }
+                buildMenu()
+            }
+            return
+        }
+
         Settings.provider = p; Settings.model = p.defaultModel; buildMenu()
+    }
+
+    @objc private func refreshOllamaModels() {
+        Task { @MainActor in
+            status.show("fetching models...", resetAfter: nil)
+            let running = await TextCleaner.isOllamaRunning()
+            guard running else { status.show("Ollama not running — start with: ollama serve"); return }
+            let models = await TextCleaner.fetchOllamaModels()
+            if models.isEmpty { status.show("no models found — run: ollama pull llama3"); return }
+            Settings.cachedOllamaModels = models
+            if !models.contains(Settings.model) { Settings.model = models[0] }
+            buildMenu()
+            status.show("\(models.count) model\(models.count == 1 ? "" : "s") found")
+        }
     }
     @objc private func selectModel(_ sender: NSMenuItem) {
         guard let m = sender.representedObject as? String else { return }
@@ -557,7 +606,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
     }
     @objc private func testCleanupAPI() {
-        guard Settings.apiKey != nil else { status.show("No API key set"); return }
+        guard !Settings.provider.requiresAPIKey || Settings.apiKey != nil else { status.show("No API key set"); return }
         Task { @MainActor in
             status.show("// testing...", resetAfter: nil)
             do {
@@ -578,6 +627,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
     @objc private func openInputMonitoringSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+    }
+    @objc private func openMicrophoneSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+    }
+    @objc private func openSpeechRecognitionSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!)
+    }
+    @objc private func openKeyboardDictationSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
     }
     @objc private func copyDebugStatus() {
         NSPasteboard.general.clearContents()
@@ -743,6 +801,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         i wanted to circle back and touch base re the synergy we discussed re q4
 
+        Voice brief: place cursor on a blank line, type //, then talk.
+        typeROID transcribes locally and rewrites what you said into smart brevity.
+
         ─────────────────────────────────────────
         ?? — Ask AI anything. Answer replaces what you typed.
         ─────────────────────────────────────────
@@ -891,6 +952,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .context: label = "\\\\"; verb = "reading"
         case .translate: label = ";;"; verb = "translating"
         case .math: label = "=="; verb = "calculating"
+        case .rephrase: label = "||"; verb = "rephrasing"
+        case .smartBrevity: label = "//"; verb = "briefing"
         case .custom(let name): label = name; verb = "running"
         }
 
@@ -899,9 +962,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         guard AXIsProcessTrusted() else { status.show("\(label) needs Accessibility permission"); return }
         guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
             status.show("\(label) won't touch password fields"); return }
-        guard !AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) else {
-            status.show("\(label) won't touch address bars"); return }
-        guard Settings.apiKey != nil else { status.show("\(label) no API key — set one in the menu"); return }
+        if AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) {
+            status.show("\(label) won't touch address bars"); return
+        }
+        guard !Settings.provider.requiresAPIKey || Settings.apiKey != nil else { status.show("\(label) no API key — set one in the menu"); return }
 
         activeTask = Task { @MainActor in
             defer {
@@ -939,10 +1003,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .query: trigger = Settings.contextTrigger
                 case .translate: trigger = Settings.translateTrigger
                 case .math: trigger = Settings.mathTrigger
+                case .rephrase: trigger = Settings.rephraseTrigger
+                case .smartBrevity: trigger = Settings.trigger
                 case .context: trigger = Settings.rewriteTrigger
                 case .custom(let name): trigger = name
                 }
                 try await Task.sleep(for: .milliseconds(80))
+                if mode == .clean, try await handleCleanOrVoiceMode(trigger: trigger) { return }
+
                 let fullCapture = false
                 if try await handleWithAccessibility(trigger: trigger, mode: mode, fullCapture: fullCapture) { return }
 
@@ -972,6 +1040,95 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             }
             // no status.reset() here - show() auto-resets after 2s
         }
+    }
+
+    private func handleCleanOrVoiceMode(trigger: String) async throws -> Bool {
+        do {
+            let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+            return try await processCapturedText(captured, mode: .clean, label: "//")
+        } catch AccessibilityReplacementError.emptyMessage {
+            let captured = try? AccessibilityReplacement.captureTriggerOnly(trigger: trigger)
+            try await handleVoiceBriefMode(captured: captured, fallbackTrigger: trigger)
+            return true
+        } catch is AccessibilityReplacementError {
+            return false
+        }
+    }
+
+    private func handleVoiceBriefMode(captured: AccessibilityCapturedText?, fallbackTrigger: String) async throws {
+        capturedBeforeProcess = captured
+        if let captured {
+            try? AccessibilityReplacement.replaceCapturedText(captured, with: "listening...")
+        } else {
+            status.show("// listening...", resetAfter: nil)
+        }
+
+        do {
+            let transcript = try await transcribeVoice()
+            lastCapturedSummary = "\(transcript.count) voice chars"
+            if let captured {
+                try? AccessibilityReplacement.replaceCapturedText(captured, with: "tightening...")
+            }
+            status.show("// tightening...", resetAfter: nil)
+
+            let brief = try await TextCleaner.process(transcript, mode: .smartBrevity)
+            capturedBeforeProcess = nil
+
+            if let captured {
+                try AccessibilityReplacement.replaceCapturedText(captured, with: brief, selectReplacement: true)
+                setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: captured))
+            } else {
+                ClipboardReplacement.replaceCurrentSelection(with: brief)
+                setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: nil))
+            }
+            status.show("// voice brief done")
+        } catch {
+            capturedBeforeProcess = nil
+            let message = voiceErrorMessage(error)
+            if message == "Turn on Keyboard > Dictation" {
+                openKeyboardDictationSettings()
+            }
+            if let captured {
+                try? AccessibilityReplacement.replaceCapturedText(captured, with: "")
+            } else {
+                for _ in 0..<fallbackTrigger.count {
+                    let down = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: true)
+                    down?.post(tap: .cghidEventTap)
+                    let up = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: false)
+                    up?.post(tap: .cghidEventTap)
+                }
+            }
+            status.show(message)
+        }
+    }
+
+    private func transcribeVoice() async throws -> String {
+        if WhisperDictation.isConfigured {
+            return try await WhisperDictation().transcribe()
+        }
+        return try await VoiceDictation().transcribe()
+    }
+
+    private func processCapturedText(_ captured: AccessibilityCapturedText, mode: CleanMode, label: String) async throws -> Bool {
+        if captured.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.show("nothing to do"); return true
+        }
+        lastCapturedSummary = "\(captured.text.count) chars"
+        capturedBeforeProcess = captured
+        startInlineLoading(in: captured, fallbackTrigger: label)
+        let cleaned = try await TextCleaner.process(captured.text, mode: mode)
+        capturedBeforeProcess = nil
+        stopInlineLoading()
+        if mode == .clean {
+            guard cleaned.trimmingCharacters(in: .whitespacesAndNewlines) != captured.text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                try AccessibilityReplacement.replaceCapturedText(captured, with: captured.text)
+                status.show("looks good"); return true
+            }
+        }
+        try AccessibilityReplacement.replaceCapturedText(captured, with: cleaned)
+        setReplacement(ReplacementRecord(original: captured.text, replacement: cleaned, accessibilityCaptured: captured))
+        status.show("\(label) done")
+        return true
     }
 
     private func handleContextMode() async throws {
@@ -1106,6 +1263,37 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
     }
 
+    private func requestVoicePermissionsAndOpenSettingsIfNeeded() async {
+        _ = await VoiceDictation.requestMicrophonePermission()
+        _ = await VoiceDictation.requestSpeechPermission()
+
+        if !VoiceDictation.microphoneAuthorized {
+            openMicrophoneSettings()
+        } else if !WhisperDictation.isConfigured && !VoiceDictation.speechAuthorized {
+            openSpeechRecognitionSettings()
+        } else if !WhisperDictation.isConfigured && !VoiceDictation.systemDictationEnabled {
+            openKeyboardDictationSettings()
+        }
+    }
+
+    private func voiceReadyForCurrentTranscriber() -> Bool {
+        if WhisperDictation.isConfigured {
+            return VoiceDictation.microphoneAuthorized
+        }
+        return VoiceDictation.voiceReady
+    }
+
+    private func voiceErrorMessage(_ error: Error) -> String {
+        if case VoiceDictationError.recognizerUnavailable = error {
+            return "Turn on Keyboard > Dictation"
+        }
+        let message = error.localizedDescription
+        if message.localizedCaseInsensitiveContains("dictation") || message.localizedCaseInsensitiveContains("siri") {
+            return "Turn on Keyboard > Dictation"
+        }
+        return message
+    }
+
     // MARK: - Onboarding
 
     private func runOnboarding() {
@@ -1132,13 +1320,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         if savedStep > 0 {
             // Resuming after restart. Check if permissions are now granted.
             let accOK = AXIsProcessTrusted()
-            let hasKey = Settings.apiKey != nil
+            let hasKey = !Settings.provider.requiresAPIKey || Settings.apiKey != nil
             if hasKey && accOK {
-                step = 10 // skip to test
+                step = voiceReadyForCurrentTranscriber() ? 12 : 6 // voice permissions, then test
             } else if hasKey {
                 step = 2 // have key but need permissions
-            } else if accOK && savedStep >= 6 {
-                step = 6 // have permissions, need provider/key
+            } else if accOK && savedStep >= 7 {
+                step = 7 // have permissions, need provider/key
             } else {
                 step = savedStep
             }
@@ -1158,13 +1346,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = await onboarding.show(step: .init(
                     title: "Type like a goblin. Send like a grown-up.",
                     body: """
-                    Performance-enhancing drugs for your typing. Five triggers, all inline, works in any app.
+                    Performance-enhancing drugs for your typing. Six triggers, all inline, works in any app.
 
                     //   Fix your text. Grammar, spelling, keeps your voice.
+                    //   On a blank line: talk, then get smart brevity.
                     ??   Ask AI anything. Answer replaces your text.
                     ;;   Translate to another language.
                     ==   Math and conversions. Just the answer.
                     \\\\   Summarize a thread and draft a reply.
+                    ||   Paste canned text, rewrite it like a human.
 
                     Open source. No telemetry. No database. No account.
                     """,
@@ -1252,8 +1442,70 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 Settings.provider = selectedProvider
                 step = 6
 
-            // 6. Pick provider
+            // 6. Voice permissions
             case 6:
+                let hasVoicePermissions = voiceReadyForCurrentTranscriber()
+                let usingWhisper = WhisperDictation.isConfigured
+                let body = hasVoicePermissions
+                    ? "Microphone is on. Voice brief mode is ready."
+                    : usingWhisper
+                        ? "Voice brief mode uses your microphone and local Whisper. Audio stays on this Mac.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
+                        : "Voice brief mode uses your microphone and Apple's Speech Recognition.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
+                let r = await onboarding.show(step: .init(
+                    title: hasVoicePermissions ? "Voice: on" : "Voice permissions",
+                    body: body,
+                    buttonTitles: hasVoicePermissions ? ["Continue"] : ["Set Up Voice", "Skip"],
+                    showBack: true
+                ))
+                if r == OnboardingWindow.backResult { step = 5; continue }
+                if !hasVoicePermissions {
+                    if r == 0 {
+                        await requestVoicePermissionsAndOpenSettingsIfNeeded()
+                        continue
+                    }
+                }
+                step = 7
+
+            // 7. Confirm voice permissions
+            case 7:
+                let microphoneOK = VoiceDictation.microphoneAuthorized
+                let usingWhisper = WhisperDictation.isConfigured
+                let speechOK = usingWhisper || VoiceDictation.speechAuthorized
+                let dictationOK = usingWhisper || VoiceDictation.systemDictationEnabled
+                let voiceOK = voiceReadyForCurrentTranscriber()
+                let missing = [
+                    microphoneOK ? nil : "Microphone",
+                    speechOK ? nil : "Speech Recognition",
+                    dictationOK ? nil : "Keyboard Dictation"
+                ].compactMap { $0 }.joined(separator: " and ")
+                let r = await onboarding.show(step: .init(
+                    title: voiceOK ? "Voice: on" : "Toggle voice on.",
+                    body: voiceOK
+                        ? "Voice brief mode is ready. On a blank line, type //, talk, then pause."
+                        : "\(missing) still needs access.\n\nTurn typeROID on in System Settings, then come back and check again.",
+                    buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
+                    showBack: true
+                ))
+                if r == OnboardingWindow.backResult { step = 6; continue }
+                if voiceOK {
+                    step = 8
+                    continue
+                }
+                if r == 0 { continue }
+                if r == 1 {
+                    if !microphoneOK {
+                        openMicrophoneSettings()
+                    } else if !speechOK {
+                        openSpeechRecognitionSettings()
+                    } else {
+                        openKeyboardDictationSettings()
+                    }
+                    continue
+                }
+                step = 8
+
+            // 8. Pick provider
+            case 8:
                 let r = await onboarding.show(step: .init(
                     title: "Pick your supplier.",
                     body: """
@@ -1263,16 +1515,18 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     Claude: haiku (premium quality)
                     Gemini: flash (free tier available)
                     Groq: llama 8b (free tier, instant)
+                    Ollama: local models, no key, no cloud
                     """,
-                    buttonTitles: ["OpenAI", "Claude", "Gemini", "Groq"],
+                    buttonTitles: ["OpenAI", "Claude", "Gemini", "Groq", "Ollama"],
                     showBack: true
                 ))
-                if r == OnboardingWindow.backResult { step = 4; continue }
+                if r == OnboardingWindow.backResult { step = 7; continue }
                 selectedProvider = switch r {
                     case 0: .openai
                     case 1: .anthropic
                     case 2: .google
-                    default: .groq
+                    case 3: .groq
+                    default: .ollama
                 }
                 // Warn about Google API key exposure
                 if selectedProvider == .google {
@@ -1287,10 +1541,43 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
                 Settings.provider = selectedProvider
                 Settings.model = selectedProvider.defaultModel
-                step = 7
+                step = 9
 
-            // 7. API key instructions
-            case 7:
+            // 9. API key instructions (or Ollama health check)
+            case 9:
+                if selectedProvider == .ollama {
+                    // Ollama: no key needed — check if it's running
+                    onboarding.showLoading("checking for Ollama...")
+                    let running = await TextCleaner.isOllamaRunning()
+                    if running {
+                        let models = await TextCleaner.fetchOllamaModels()
+                        if !models.isEmpty {
+                            Settings.cachedOllamaModels = models
+                            Settings.model = models[0]
+                        }
+                        let modelList = models.isEmpty ? "No models found yet." : "Models found:\n" + models.prefix(5).joined(separator: "\n")
+                        let ro = await onboarding.show(step: .init(
+                            title: "Ollama is running.",
+                            body: "\(modelList)\n\nNo API key needed. Everything stays on your machine.",
+                            buttonTitles: ["Continue"],
+                            showBack: true
+                        ))
+                        if ro == OnboardingWindow.backResult { step = 8; continue }
+                        step = 12
+                    } else {
+                        let ro = await onboarding.show(step: .init(
+                            title: "Ollama isn't running.",
+                            body: "typeROID can't reach Ollama at localhost:11434.\n\nMake sure Ollama is installed and running:\n  brew install ollama\n  ollama serve\n\nThen pull a model:\n  ollama pull llama3\n\nYou can continue and start it later.",
+                            buttonTitles: ["Continue anyway", "Try again"],
+                            showBack: true
+                        ))
+                        if ro == OnboardingWindow.backResult { step = 8; continue }
+                        if ro == 1 { continue } // try again
+                        step = 12
+                    }
+                    continue
+                }
+
                 let keyURL: String
                 let keyInstructions: String
                 switch selectedProvider {
@@ -1306,6 +1593,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .groq:
                     keyURL = "https://console.groq.com/keys"
                     keyInstructions = "Click 'Create API Key'. Copy it."
+                case .ollama:
+                    keyURL = ""; keyInstructions = "" // handled above
                 }
                 let r = await onboarding.show(step: .init(
                     title: "Load your API key.",
@@ -1335,25 +1624,25 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     if r2 == 0 {
                         let clip2 = NSPasteboard.general.string(forType: .string)?
                             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                        if !clip2.isEmpty { step = 8 } else { step = 9 }
-                    } else { step = 11 }
+                        if !clip2.isEmpty { step = 10 } else { step = 11 }
+                    } else { step = 13 }
                     continue
                 }
-                if r == OnboardingWindow.backResult { step = 6; continue }
+                if r == OnboardingWindow.backResult { step = 8; continue }
                 if r == 1 { // "Paste from Clipboard"
                     let clip = NSPasteboard.general.string(forType: .string)?
                         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     if !clip.isEmpty {
-                        step = 8
+                        step = 10
                     } else {
-                        step = 9
+                        step = 11
                     }
                 } else { // "Skip"
-                    step = 11
+                    step = 13
                 }
 
-            // 8. Keychain warning + save
-            case 8:
+            // 10. Keychain warning + save
+            case 10:
                 // Grab clipboard NOW before any dialogs change it
                 let clipToSave = NSPasteboard.general.string(forType: .string)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1370,24 +1659,24 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     body: "\(String(clip.prefix(8)))...\(String(clip.suffix(4)))\n\nStored securely in your Keychain.",
                     buttonTitles: ["Continue"]
                 ))
-                step = 10
+                step = 12
 
-            // 9. Empty clipboard
-            case 9:
+            // 11. Empty clipboard
+            case 11:
                 let r9 = await onboarding.show(step: .init(
                     title: "Nothing on clipboard.",
                     body: "Copy your API key first, then come back. Or skip and add it later from the // menu.\n\nSettings > API Key",
                     buttonTitles: ["Try again", "Skip"],
                     showBack: true
                 ))
-                if r9 == OnboardingWindow.backResult { step = 7; continue }
-                if r9 == 0 { step = 7; continue } // try again
-                step = 11
+                if r9 == OnboardingWindow.backResult { step = 9; continue }
+                if r9 == 0 { step = 9; continue } // try again
+                step = 13
 
-            // 10. Test API (auto-send, show joke while waiting)
-            case 10:
-                if Settings.apiKey(for: selectedProvider) == nil {
-                    step = 11; continue
+            // 12. Test API (auto-send, show joke while waiting)
+            case 12:
+                if selectedProvider.requiresAPIKey && Settings.apiKey(for: selectedProvider) == nil {
+                    step = 13; continue
                 }
                 onboarding.showLoading("injecting test substance into \(selectedProvider.displayName)...")
                 let sample = "yojohn saww you lookmaxxing during the meting w our client, bettr off mewing on your own time bro lmaooo"
@@ -1413,10 +1702,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                         buttonTitles: ["Continue"]
                     ))
                 }
-                step = 11
+                step = 13
 
-            // 11. Final screen
-            case 11:
+            // 13. Final screen
+            case 13:
                 _ = await onboarding.showDemo()
                 Settings.onboardingStep = 0
                 step = 0

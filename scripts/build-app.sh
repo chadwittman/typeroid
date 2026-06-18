@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.0</string>
+  <string>0.2.11</string>
   <key>CFBundleVersion</key>
-  <string>11</string>
+  <string>22</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -58,6 +58,10 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <string>TypeRoid watches for your cleanup trigger so it can fix text when you type it.</string>
   <key>NSAccessibilityUsageDescription</key>
   <string>TypeRoid uses Accessibility to select and replace the text you ask it to clean.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>TypeRoid uses the microphone when you start voice brief mode.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>TypeRoid uses on-device speech recognition to transcribe voice brief mode.</string>
 </dict>
 </plist>
 PLIST
@@ -78,7 +82,7 @@ fi
 
 if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${TYPEROID_NOTARY_PASSWORD:-}" ] && [ -n "${TYPEROID_TEAM_ID:-}" ]; then
     echo "Signing with Developer ID..."
-    codesign --force --deep --options runtime --timestamp \
+    codesign --force --deep --options runtime --timestamp --entitlements "$ROOT/TypeRoid.entitlements" \
         --sign "$DEVELOPER_ID" "$APP_DIR"
 
     echo "Building DMG..."
@@ -117,7 +121,7 @@ if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${T
 
 elif [ "$HAS_DEVELOPER_ID" -eq 1 ]; then
     echo "Signing with Developer ID..."
-    codesign --force --deep --options runtime --timestamp \
+    codesign --force --deep --options runtime --timestamp --entitlements "$ROOT/TypeRoid.entitlements" \
         --sign "$DEVELOPER_ID" "$APP_DIR"
 
     echo "Building signed DMG..."
@@ -129,7 +133,7 @@ elif [ "$HAS_DEVELOPER_ID" -eq 1 ]; then
 else
     echo "No Developer ID identity found — using ad-hoc signature."
     echo "Set TYPEROID_DEVELOPER_ID or install the Developer ID certificate to sign."
-    codesign --force --deep --sign - "$APP_DIR"
+    codesign --force --deep --options runtime --entitlements "$ROOT/TypeRoid.entitlements" --sign - "$APP_DIR"
     echo "Building unsigned DMG..."
     bash "$ROOT/scripts/build-dmg.sh"
     echo "Built $DMG (unsigned)"

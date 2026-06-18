@@ -37,6 +37,19 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 brew install --cask chadwittman/typeroid/typeroid
 ```
 
+### Update
+
+```bash
+brew update
+brew upgrade --cask typeroid
+```
+
+If Homebrew says the app is already installed but the menu bar version is old:
+
+```bash
+brew reinstall --cask chadwittman/typeroid/typeroid
+```
+
 ### Manual
 
 1. Download `typeROID.dmg` from [Releases](../../releases)

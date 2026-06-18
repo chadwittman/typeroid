@@ -4,12 +4,13 @@ import Foundation
 
 public final class TriggerMonitor {
     private let onTrigger: (CleanMode) -> Void
-    private let triggerProvider: () -> String          // //
-    private let contextTriggerProvider: () -> String   // \\ (clipboard context)
-    private let queryTriggerProvider: () -> String     // ?? (ask AI)
+    private let triggerProvider: () -> String           // //
+    private let contextTriggerProvider: () -> String    // \\ (clipboard context)
+    private let queryTriggerProvider: () -> String      // ?? (ask AI)
     private let translateTriggerProvider: () -> String  // ;; (translate)
-    private let mathTriggerProvider: () -> String      // == (math)
-    private let customCommandsProvider: () -> [String] // available ..commands
+    private let mathTriggerProvider: () -> String       // == (math)
+    private let rephraseTriggerProvider: () -> String   // || (rephrase/de-corp)
+    private let customCommandsProvider: () -> [String]  // available ..commands
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -24,6 +25,7 @@ public final class TriggerMonitor {
         queryTriggerProvider: @escaping () -> String = { Settings.contextTrigger },
         translateTriggerProvider: @escaping () -> String = { Settings.translateTrigger },
         mathTriggerProvider: @escaping () -> String = { Settings.mathTrigger },
+        rephraseTriggerProvider: @escaping () -> String = { Settings.rephraseTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
         onTrigger: @escaping (CleanMode) -> Void
@@ -33,6 +35,7 @@ public final class TriggerMonitor {
         self.queryTriggerProvider = queryTriggerProvider
         self.translateTriggerProvider = translateTriggerProvider
         self.mathTriggerProvider = mathTriggerProvider
+        self.rephraseTriggerProvider = rephraseTriggerProvider
         self.customCommandsProvider = customCommandsProvider
         self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
@@ -112,13 +115,14 @@ public final class TriggerMonitor {
 
     func handleTypedCharacters(_ string: String) {
         let cleanTrigger = triggerProvider()
-        let contextTrigger = contextTriggerProvider()   // \\
-        let queryTrigger = queryTriggerProvider()       // ??
+        let contextTrigger = contextTriggerProvider()     // \\
+        let queryTrigger = queryTriggerProvider()         // ??
         let translateTrigger = translateTriggerProvider() // ;;
-        let mathTrigger = mathTriggerProvider()         // ==
+        let mathTrigger = mathTriggerProvider()           // ==
+        let rephraseTrigger = rephraseTriggerProvider()   // ||
         let customCommands = customCommandsProvider()
         let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
-        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, maxCustomLen, 1) + 1
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, maxCustomLen, 1) + 1
 
         for character in string {
             if character.isNewline {
@@ -141,6 +145,15 @@ public final class TriggerMonitor {
                 onTrigger(.custom(cmd))
                 return
             }
+        }
+
+        // Check rephrase trigger (||)
+        if recentCharacters.hasSuffix(rephraseTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatched)
+            onTrigger(.rephrase)
+            return
         }
 
         // Check math trigger (==)

@@ -22,7 +22,13 @@ public enum CleanMode: Sendable, Equatable {
     case context    // \\ use clipboard as context, draft a response
     case translate  // ;; translate to target language
     case math       // == calculate or convert
+    case rephrase   // || rewrite canned/corporate text in your own voice
+    case smartBrevity // // at empty cursor: spoken draft to concise written text
     case custom(String) // ..commandname, user-defined commands
+
+    public var isUnsafeInBrowserAddressBar: Bool {
+        true
+    }
 }
 
 public enum AIProvider: String, CaseIterable, Sendable {
@@ -30,6 +36,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
     case anthropic = "anthropic"
     case google = "google"
     case groq = "groq"
+    case ollama = "ollama"
 
     public var displayName: String {
         switch self {
@@ -37,6 +44,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return "Anthropic (Claude)"
         case .google: return "Google (Gemini)"
         case .groq: return "Groq"
+        case .ollama: return "Ollama (local)"
         }
     }
 
@@ -46,6 +54,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return "claude-haiku-4-5-20251001"
         case .google: return "gemini-2.0-flash"
         case .groq: return "llama-3.1-8b-instant"
+        case .ollama: return "llama3:latest"
         }
     }
 
@@ -55,6 +64,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return "https://api.anthropic.com/v1/messages"
         case .google: return "https://generativelanguage.googleapis.com/v1beta/models"
         case .groq: return "https://api.groq.com/openai/v1/chat/completions"
+        case .ollama: return "http://localhost:11434/v1/chat/completions"
         }
     }
 
@@ -68,6 +78,14 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return "sk-ant-..."
         case .google: return "AIza..."
         case .groq: return "gsk_..."
+        case .ollama: return "(no key needed)"
+        }
+    }
+
+    public var requiresAPIKey: Bool {
+        switch self {
+        case .ollama: return false
+        default: return true
         }
     }
 
@@ -78,6 +96,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return ["claude-haiku-4-5-20251001", "claude-sonnet-4-5-20250514"]
         case .google: return ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
         case .groq: return ["llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+        case .ollama: return Settings.cachedOllamaModels.isEmpty ? ["llama3:latest"] : Settings.cachedOllamaModels
         }
     }
 
@@ -89,6 +108,7 @@ public enum AIProvider: String, CaseIterable, Sendable {
         case .anthropic: return "claude-haiku-4-5-20251001"  // already the fastest
         case .google: return "gemini-2.0-flash"   // fast + built-in search
         case .groq: return "llama-3.3-70b-versatile"  // much better factual recall than 8b
+        case .ollama: return Settings.model        // use whatever model the user picked
         }
     }
 }
@@ -149,8 +169,10 @@ public enum TextCleaner {
     public static func processWithContext(_ request: String, threadContext: String, mode: CleanMode = .context) async throws -> String {
         let provider = Settings.provider
         let apiKey = Settings.apiKey(for: provider)
-        guard let apiKey, !apiKey.isEmpty else {
-            throw TextCleanerError.missingAPIKey
+        if provider.requiresAPIKey {
+            guard let apiKey, !apiKey.isEmpty else {
+                throw TextCleanerError.missingAPIKey
+            }
         }
 
         // Sensitive data check on thread context
@@ -173,12 +195,43 @@ public enum TextCleaner {
 
         let model = Settings.model
         switch provider {
-        case .openai: return try await callOpenAI(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
-        case .anthropic: return try await callAnthropic(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
-        case .google: return try await callGoogle(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
-        case .groq: return try await callGroq(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .openai: return try await callOpenAI(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
+        case .anthropic: return try await callAnthropic(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
+        case .google: return try await callGoogle(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
+        case .groq: return try await callGroq(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
+        case .ollama: return try await callOllama(text: fullPrompt, instruction: fullInstruction, model: model)
         }
     }
+
+    static let rephraseInstruction = """
+    You are typeROID in rephrase mode.
+
+    The user pasted text that sounds canned, corporate, or generic and wants it rewritten.
+    Same meaning. Different delivery. Sound like a real person said it.
+    Kill the buzzwords. Kill the filler. Kill the passive voice.
+    Keep it direct, confident, and appropriately casual.
+    Do not add ideas or change the meaning.
+    Return only the rewritten text.
+    """
+
+    static let smartBrevityInstruction = """
+    You are typeROID in voice brief mode.
+
+    The user dictated a rough spoken statement, note, or request.
+    Your job is to compact the user's original message into smart brevity.
+    Do not answer the user.
+    Do not respond to the content.
+    Do not solve requests or explain anything.
+    If the transcript contains a question, preserve it as a concise question.
+    If the transcript contains an instruction, preserve it as a concise instruction.
+    Keep the user's intent, point of view, and audience.
+    Remove filler, false starts, throat-clearing, repetition, and hedging.
+    Make the message concise, clear, and useful.
+    Prefer short paragraphs or bullets only when bullets make the message easier to scan.
+    Do not add facts, claims, or ideas.
+    Do not make it sound corporate.
+    Return only the compacted message.
+    """
 
     static let translateInstruction = """
     You are typeROID in translate mode.
@@ -212,8 +265,10 @@ public enum TextCleaner {
     public static func process(_ text: String, mode: CleanMode = .clean, translateTarget: String? = nil) async throws -> String {
         let provider = Settings.provider
         let apiKey = Settings.apiKey(for: provider)
-        guard let apiKey, !apiKey.isEmpty else {
-            throw TextCleanerError.missingAPIKey
+        if provider.requiresAPIKey {
+            guard let apiKey, !apiKey.isEmpty else {
+                throw TextCleanerError.missingAPIKey
+            }
         }
 
         let targetLang = translateTarget ?? Settings.translateTarget
@@ -230,6 +285,10 @@ public enum TextCleaner {
             instruction = translateInstruction + "\nTranslate to \(targetLang)."
         case .math:
             instruction = mathInstruction
+        case .rephrase:
+            instruction = rephraseInstruction
+        case .smartBrevity:
+            instruction = smartBrevityInstruction
         case .custom(let name):
             guard let customPrompt = loadCustomCommand(name) else {
                 throw TextCleanerError.apiError("No command for '\(name)'. Create ~/.typeroid/commands/\(name).txt with your prompt.")
@@ -255,17 +314,19 @@ public enum TextCleaner {
         let model = (mode == .query) ? provider.queryModel : Settings.model
         let useWebSearch = (mode == .query) && Settings.webSearchEnabled
             && (provider == .openai || provider == .google)
-        let timeout: TimeInterval = (mode == .query) ? 12 : 30
+        let timeout: TimeInterval = (provider == .ollama) ? 120 : (mode == .query) ? 12 : 30
 
         switch provider {
         case .openai:
-            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
+            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", webSearch: useWebSearch, timeout: timeout)
         case .anthropic:
-            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
+            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", timeout: timeout)
         case .google:
-            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
+            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", webSearch: useWebSearch, timeout: timeout)
         case .groq:
-            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
+            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", timeout: timeout)
+        case .ollama:
+            return try await callOllama(text: text, instruction: fullInstruction, model: model, timeout: timeout)
         }
     }
 
@@ -411,6 +472,64 @@ public enum TextCleaner {
             return text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         throw TextCleanerError.invalidResponse
+    }
+
+    // MARK: - Ollama (local, OpenAI-compatible)
+    private static func callOllama(text: String, instruction: String, model: String, timeout: TimeInterval = 120) async throws -> String {
+        var request = URLRequest(url: URL(string: "http://localhost:11434/v1/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = timeout
+
+        let body: [String: Any] = [
+            "model": model,
+            "temperature": 0.1,
+            "stream": false,
+            "messages": [
+                ["role": "system", "content": instruction],
+                ["role": "user", "content": text]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+                throw TextCleanerError.apiError("Ollama returned error \(http.statusCode). Is the model downloaded? Run: ollama pull \(model)")
+            }
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if let choices = json?["choices"] as? [[String: Any]],
+               let first = choices.first,
+               let message = first["message"] as? [String: Any],
+               let text = message["content"] as? String {
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            throw TextCleanerError.invalidResponse
+        } catch let error as TextCleanerError {
+            throw error
+        } catch let urlError as URLError {
+            if urlError.code == .timedOut {
+                throw TextCleanerError.apiError("Ollama timed out. The model may still be loading — try again in a moment.")
+            }
+            throw TextCleanerError.apiError("Ollama isn't running. Start it with: ollama serve")
+        }
+    }
+
+    /// Fetch available model names from the local Ollama server.
+    public static func fetchOllamaModels() async -> [String] {
+        var request = URLRequest(url: URL(string: "http://localhost:11434/api/tags")!)
+        request.timeoutInterval = 3
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = json["models"] as? [[String: Any]] else { return [] }
+        return models.compactMap { $0["name"] as? String }.sorted()
+    }
+
+    /// Returns true if Ollama is reachable.
+    public static func isOllamaRunning() async -> Bool {
+        var request = URLRequest(url: URL(string: "http://localhost:11434/api/tags")!)
+        request.timeoutInterval = 2
+        return (try? await URLSession.shared.data(for: request)) != nil
     }
 
     // MARK: - Helpers

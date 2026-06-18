@@ -16,6 +16,7 @@ public enum Settings {
     private static let translateTriggerKey = "translate_trigger"
     private static let translateTargetKey = "translate_target"
     private static let mathTriggerKey = "math_trigger"
+    private static let rephraseTriggerKey = "rephrase_trigger"
 
     public static let defaultExcludedBundleIDs: Set<String> = [
         "com.apple.Terminal",
@@ -110,6 +111,11 @@ public enum Settings {
         set { UserDefaults.standard.set(newValue.isEmpty ? "==" : newValue, forKey: mathTriggerKey) }
     }
 
+    public static var rephraseTrigger: String {
+        get { UserDefaults.standard.string(forKey: rephraseTriggerKey) ?? "||" }
+        set { UserDefaults.standard.set(newValue.isEmpty ? "||" : newValue, forKey: rephraseTriggerKey) }
+    }
+
     public static var translateTarget: String {
         get {
             let v = UserDefaults.standard.string(forKey: translateTargetKey) ?? "Spanish"
@@ -131,6 +137,30 @@ public enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: languageKey) }
     }
 
+    public static var languageLocaleIdentifier: String {
+        switch language {
+        case "Spanish": return "es-US"
+        case "French": return "fr-FR"
+        case "German": return "de-DE"
+        case "Portuguese": return "pt-BR"
+        case "Italian": return "it-IT"
+        case "Dutch": return "nl-NL"
+        case "Japanese": return "ja-JP"
+        case "Korean": return "ko-KR"
+        case "Chinese (Simplified)": return "zh-Hans"
+        case "Chinese (Traditional)": return "zh-Hant"
+        case "Arabic": return "ar-SA"
+        case "Hindi": return "hi-IN"
+        case "Russian": return "ru-RU"
+        case "Polish": return "pl-PL"
+        case "Turkish": return "tr-TR"
+        case "Swedish": return "sv-SE"
+        case "Norwegian": return "nb-NO"
+        case "Danish": return "da-DK"
+        default: return "en-US"
+        }
+    }
+
     // MARK: - Translation Proof
     private static let backTranslateKey = "back_translate_enabled"
 
@@ -143,7 +173,7 @@ public enum Settings {
     private static let useStyleKey = "use_writing_style"
     private static let webSearchKey = "web_search_enabled"
 
-    public static let currentVersion = "0.1.9"
+    public static let currentVersion = "0.2.11"
     public static let updateCheckURL = "https://raw.githubusercontent.com/typeroid/typeroid/main/version.txt"
 
     public static var webSearchEnabled: Bool {
@@ -217,5 +247,13 @@ public enum Settings {
 
     public static func resetExcludedBundleIDsToDefaults() {
         excludedBundleIDs = defaultExcludedBundleIDs
+    }
+
+    // MARK: - Ollama
+    private static let cachedOllamaModelsKey = "cached_ollama_models"
+
+    public static var cachedOllamaModels: [String] {
+        get { UserDefaults.standard.stringArray(forKey: cachedOllamaModelsKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: cachedOllamaModelsKey) }
     }
 }

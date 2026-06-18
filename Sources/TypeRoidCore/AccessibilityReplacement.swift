@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import Foundation
 
@@ -55,6 +56,22 @@ public enum AccessibilityReplacement {
             .map { $0.lowercased() }
             .joined(separator: " ")
 
+        let blockedPhrases = [
+            "address and search",
+            "address bar",
+            "location bar",
+            "smart search",
+            "omnibox",
+            "url"
+        ]
+        return blockedPhrases.contains { metadata.contains($0) }
+    }
+
+    public static func capturedTextLooksLikeBrowserAddressBar(_ captured: AccessibilityCapturedText, bundleID: String?) -> Bool {
+        guard let bundleID, Settings.browserBundleIDs.contains(bundleID) else { return false }
+        let metadata = focusedElementMetadata(captured.element)
+            .map { $0.lowercased() }
+            .joined(separator: " ")
         let blockedPhrases = [
             "address and search",
             "address bar",
@@ -151,17 +168,114 @@ public enum AccessibilityReplacement {
             kAXValueAttribute as CFString,
             updated as CFTypeRef
         )
-        guard result == .success else {
-            throw AccessibilityReplacementError.replacementFailed
+
+        if result == .success {
+            if selectReplacement && !replacement.isEmpty {
+                let start = captured.fullValue.distance(from: captured.fullValue.startIndex, to: captured.replaceRange.lowerBound)
+                var cfRange = CFRange(location: start, length: replacement.count)
+                if let axVal = AXValueCreate(AXValueType.cfRange, &cfRange) {
+                    AXUIElementSetAttributeValue(captured.element, kAXSelectedTextRangeAttribute as CFString, axVal)
+                }
+            }
+        } else {
+            // AX write blocked (browser contenteditable: Twitter, Notion, Linear, etc.)
+            // Fall back to keyboard simulation: select back over the original text, then paste.
+            let selectCount = captured.fullValue.distance(
+                from: captured.replaceRange.lowerBound,
+                to: captured.replaceRange.upperBound
+            )
+            try keyboardSimulationReplace(selectCount: selectCount, replacement: replacement)
+        }
+    }
+
+    public static func replaceCapturedTextWithKeyboard(_ captured: AccessibilityCapturedText, with replacement: String) throws {
+        let selectCount = captured.fullValue.distance(
+            from: captured.replaceRange.lowerBound,
+            to: captured.replaceRange.upperBound
+        )
+        try keyboardSimulationReplace(selectCount: selectCount, replacement: replacement)
+    }
+
+    public static func replaceCurrentFieldWithKeyboard(_ replacement: String) {
+        let pb = NSPasteboard.general
+        let savedContents = pasteboardContents(from: pb)
+        key("a", flags: [.maskCommand])
+        usleep(60_000)
+        pasteText(replacement)
+        restorePasteboard(contents: savedContents, after: 0.35)
+    }
+
+    /// Select `selectCount` chars to the left, paste `replacement` via clipboard.
+    /// Used as a fallback when AX write is unavailable (browser contenteditable).
+    private static func keyboardSimulationReplace(selectCount: Int, replacement: String) throws {
+        let src = CGEventSource(stateID: .hidSystemState)
+
+        // Save current clipboard so we can restore it after paste
+        let pb = NSPasteboard.general
+        let savedContents = pasteboardContents(from: pb)
+
+        // Select the characters to replace (Shift+Left × selectCount)
+        for _ in 0..<selectCount {
+            let down = CGEvent(keyboardEventSource: src, virtualKey: 0x7B, keyDown: true)  // Left arrow
+            let up   = CGEvent(keyboardEventSource: src, virtualKey: 0x7B, keyDown: false)
+            down?.flags = .maskShift
+            up?.flags   = .maskShift
+            down?.post(tap: .cghidEventTap)
+            up?.post(tap: .cghidEventTap)
         }
 
-        if selectReplacement && !replacement.isEmpty {
-            let start = captured.fullValue.distance(from: captured.fullValue.startIndex, to: captured.replaceRange.lowerBound)
-            var cfRange = CFRange(location: start, length: replacement.count)
-            if let axVal = AXValueCreate(AXValueType.cfRange, &cfRange) {
-                AXUIElementSetAttributeValue(captured.element, kAXSelectedTextRangeAttribute as CFString, axVal)
+        pasteText(replacement)
+
+        restorePasteboard(contents: savedContents, after: 0.35)
+    }
+
+    private static func pasteText(_ text: String) {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        let vDown = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)   // V
+        let vUp   = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: false)
+        vDown?.flags = .maskCommand
+        vUp?.flags   = .maskCommand
+        vDown?.post(tap: .cghidEventTap)
+        vUp?.post(tap: .cghidEventTap)
+    }
+
+    private static func pasteboardContents(from pasteboard: NSPasteboard) -> [(NSPasteboard.PasteboardType, Data)] {
+        pasteboard.pasteboardItems?.flatMap { item in
+            item.types.compactMap { type in
+                item.data(forType: type).map { (type, $0) }
+            }
+        } ?? []
+    }
+
+    private static func restorePasteboard(contents: [(NSPasteboard.PasteboardType, Data)], after delay: TimeInterval) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            for (type, data) in contents {
+                pasteboard.setData(data, forType: type)
             }
         }
+    }
+
+    private static func key(_ character: String, flags: CGEventFlags = []) {
+        guard let scalar = character.unicodeScalars.first else { return }
+        let keyCode: CGKeyCode
+        switch scalar {
+        case "a": keyCode = 0x00
+        default: return
+        }
+
+        let src = CGEventSource(stateID: .hidSystemState)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false)
+        down?.flags = flags
+        up?.flags = flags
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 
     /// Captures the current cursor position as an empty replace range so callers can
@@ -192,6 +306,35 @@ public enum AccessibilityReplacement {
         )
     }
 
+    /// Captures the trigger itself as the replace range. Used when a trigger with
+    /// no preceding message should become an insertion workflow, such as voice mode.
+    public static func captureTriggerOnly(trigger: String) throws -> AccessibilityCapturedText {
+        let element = try focusedElement()
+        guard !isSecureTextEntry(element) else {
+            throw AccessibilityReplacementError.secureTextField
+        }
+
+        var valueObject: AnyObject?
+        let valueResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            &valueObject
+        )
+        guard valueResult == .success, let value = valueObject as? String else {
+            throw AccessibilityReplacementError.unsupportedElement
+        }
+        guard let triggerRange = value.range(of: trigger, options: .backwards) else {
+            throw AccessibilityReplacementError.triggerNotFound
+        }
+
+        return AccessibilityCapturedText(
+            text: "",
+            element: element,
+            fullValue: value,
+            replaceRange: triggerRange
+        )
+    }
+
     static func currentMessageRange(in value: String, endingAt end: String.Index, fullCapture: Bool = false) -> Range<String.Index> {
         if fullCapture {
             return value.startIndex..<end
@@ -199,6 +342,9 @@ public enum AccessibilityReplacement {
         let prefix = value[..<end]
         if let paragraphBreak = prefix.range(of: "\n\n", options: .backwards) {
             return paragraphBreak.upperBound..<end
+        }
+        if let lineBreak = prefix.range(of: "\n", options: .backwards) {
+            return lineBreak.upperBound..<end
         }
         return value.startIndex..<end
     }

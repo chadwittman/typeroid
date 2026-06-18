@@ -104,15 +104,20 @@ final class OnboardingWindow {
         bodyLabel.animator().alphaValue = 1
         NSAnimationContext.endGrouping()
 
-        // Buttons row - shrink sizing for many buttons
+        // Buttons row - shrink sizing for many buttons and keep clear of Back.
         let manyButtons = step.buttonTitles.count > 3
-        var buttonX: CGFloat = manyButtons ? 30 : 40
+        let buttonStartX: CGFloat = manyButtons ? 30 : 40
+        let buttonAreaWidth: CGFloat = step.showBack ? 410 : 480
+        let buttonSpacing: CGFloat = manyButtons ? 6 : 12
+        let maxButtonWidth = (buttonAreaWidth - (buttonSpacing * CGFloat(max(step.buttonTitles.count - 1, 0)))) / CGFloat(max(step.buttonTitles.count, 1))
+        var buttonX = buttonStartX
         for (i, title) in step.buttonTitles.enumerated() {
             let btn = NSButton(title: title, target: self, action: #selector(buttonClicked(_:)))
             btn.tag = i
             btn.font = .monospacedSystemFont(ofSize: manyButtons ? 11 : 12, weight: i == 0 ? .bold : .regular)
             btn.sizeToFit()
-            let btnWidth = max(btn.frame.width + 16, manyButtons ? 100 : 130)
+            let naturalWidth = max(btn.frame.width + 16, manyButtons ? 86 : 130)
+            let btnWidth = manyButtons ? min(naturalWidth, maxButtonWidth) : naturalWidth
             btn.frame = NSRect(x: buttonX, y: 28, width: btnWidth, height: 34)
             btn.bezelStyle = .rounded
 
@@ -125,7 +130,7 @@ final class OnboardingWindow {
             btn.alphaValue = 0
             container.addSubview(btn)
             buttons.append(btn)
-            buttonX += btnWidth + (manyButtons ? 6 : 12)
+            buttonX += btnWidth + buttonSpacing
 
             let delay = 0.3 + Double(i) * 0.1
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {

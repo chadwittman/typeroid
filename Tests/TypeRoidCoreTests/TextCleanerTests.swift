@@ -21,6 +21,17 @@ import Testing
     #expect(instruction.contains("Return only the response"))
 }
 
+@Test func smartBrevityInstructionExists() {
+    let instruction = TextCleaner.smartBrevityInstruction
+    #expect(instruction.contains("voice brief"))
+    #expect(instruction.contains("smart brevity"))
+    #expect(instruction.contains("Do not answer the user."))
+    #expect(instruction.contains("Do not respond to the content."))
+    #expect(instruction.contains("preserve it as a concise question"))
+    #expect(instruction.contains("Remove filler"))
+    #expect(instruction.contains("Return only the compacted message"))
+}
+
 @Test func allProvidersHaveEndpoints() {
     for provider in AIProvider.allCases {
         #expect(!provider.endpoint.isEmpty)
@@ -33,6 +44,17 @@ import Testing
 
 @Test func allModesExist() {
     // Verify all modes compile and are distinct
-    let modes: [CleanMode] = [.clean, .query, .context, .translate, .math, .custom("test")]
-    #expect(modes.count == 6)
+    let modes: [CleanMode] = [.clean, .query, .context, .translate, .math, .rephrase, .smartBrevity, .custom("test")]
+    #expect(modes.count == 8)
+}
+
+@Test func browserAddressBarBlocksAllModes() {
+    #expect(CleanMode.clean.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.query.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.context.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.translate.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.math.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.rephrase.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.smartBrevity.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.custom("!!").isUnsafeInBrowserAddressBar)
 }
