@@ -23,7 +23,7 @@ public enum CleanMode: Sendable, Equatable {
     case translate  // ;; translate to target language
     case math       // == calculate or convert
     case rephrase   // || rewrite canned/corporate text in your own voice
-    case smartBrevity // // at empty cursor: spoken draft to concise written text
+    case smartBrevity // ,, spoken draft to concise written text
     case custom(String) // ..commandname, user-defined commands
 
     public var isUnsafeInBrowserAddressBar: Bool {

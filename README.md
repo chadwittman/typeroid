@@ -23,7 +23,6 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | Trigger | What it does | Example |
 |---------|-------------|---------|
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
-| blank-line `//` | Voice brief | Type `//`, talk, pause. If an app steals leading slash commands, type ` //` instead |
 | `,,` | Voice brief | Reliable voice trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
@@ -36,9 +35,7 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 Voice brief mode is for raw thoughts you would rather say than type.
 
 - Type `,,` anywhere typeROID is enabled, talk, then pause. This is the most reliable voice trigger, especially in native Slack and command-line apps.
-- Type `//` on a blank line to start voice mode in normal text fields.
-- Type ` //` when the host app opens a slash-command UI for leading `/`.
-- Type `text //` to clean existing text. That does **not** start voice mode.
+- Type `//` to clean existing text. It never starts voice mode.
 
 Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID rewrites the transcript into a compact smart-brevity brief, deletes the trigger you typed, and pastes the result.
 

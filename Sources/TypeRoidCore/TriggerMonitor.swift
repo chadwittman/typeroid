@@ -209,18 +209,11 @@ public final class TriggerMonitor {
         // Check clean trigger (//)
         if recentCharacters.hasSuffix(cleanTrigger) {
             guard shouldFireCleanTrigger(cleanTrigger) else { return }
-            let mode: CleanMode = isBlankLineTrigger(cleanTrigger) ? .smartBrevity : .clean
             recentCharacters.removeAll()
             lastCharacters = ""
             onDebugEvent(.triggerMatched)
-            onTrigger(mode)
+            onTrigger(.clean)
         }
-    }
-
-    private func isBlankLineTrigger(_ trigger: String) -> Bool {
-        guard recentCharacters.hasSuffix(trigger) else { return false }
-        let beforeTrigger = recentCharacters.dropLast(trigger.count)
-        return beforeTrigger.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func shouldFireCleanTrigger(_ trigger: String) -> Bool {

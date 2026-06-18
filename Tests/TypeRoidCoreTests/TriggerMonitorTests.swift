@@ -27,7 +27,7 @@ import Testing
     #expect(modes.isEmpty)
 }
 
-@Test func triggerMonitorFiresVoiceBriefForBareCleanTrigger() {
+@Test func triggerMonitorFiresCleanForBareCleanTrigger() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
@@ -37,10 +37,10 @@ import Testing
 
     monitor.handleTypedCharacters("//")
 
-    #expect(modes == [.smartBrevity])
+    #expect(modes == [.clean])
 }
 
-@Test func triggerMonitorFiresVoiceBriefAfterNewline() {
+@Test func triggerMonitorFiresCleanAfterNewline() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
@@ -50,10 +50,10 @@ import Testing
 
     monitor.handleTypedCharacters("first line\n//")
 
-    #expect(modes == [.smartBrevity])
+    #expect(modes == [.clean])
 }
 
-@Test func triggerMonitorFiresVoiceBriefForWhitespaceCleanTrigger() {
+@Test func triggerMonitorFiresCleanForWhitespaceCleanTrigger() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
@@ -63,7 +63,7 @@ import Testing
 
     monitor.handleTypedCharacters(" //")
 
-    #expect(modes == [.smartBrevity])
+    #expect(modes == [.clean])
 }
 
 @Test func triggerMonitorFiresVoiceBriefForVoiceTrigger() {

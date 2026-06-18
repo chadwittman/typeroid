@@ -955,7 +955,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .translate: label = ";;"; verb = "translating"
         case .math: label = "=="; verb = "calculating"
         case .rephrase: label = "||"; verb = "rephrasing"
-        case .smartBrevity: label = "//"; verb = "briefing"
+        case .smartBrevity: label = Settings.voiceTrigger; verb = "briefing"
         case .custom(let name): label = name; verb = "running"
         }
 
@@ -1062,8 +1062,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
             return try await processCapturedText(captured, mode: .clean, label: "//")
         } catch AccessibilityReplacementError.emptyMessage {
-            let captured = try? AccessibilityReplacement.captureTriggerOnly(trigger: trigger)
-            try await handleVoiceBriefMode(captured: captured, fallbackTrigger: trigger)
+            status.show("nothing to fix")
             return true
         } catch is AccessibilityReplacementError {
             return false
@@ -1078,7 +1077,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         do {
             let transcript = try await transcribeVoice(trigger: fallbackTrigger)
             lastCapturedSummary = "\(transcript.count) voice chars"
-            status.show("// cooking transcript...", resetAfter: nil)
+            status.show("\(fallbackTrigger) cooking transcript...", resetAfter: nil)
             startInlineLoading(in: nil, fallbackTrigger: fallbackTrigger)
             defer { stopInlineLoading() }
 
@@ -1087,7 +1086,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: brief)
             setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: nil))
-            status.show("// voice brief done")
+            status.show("\(fallbackTrigger) voice brief done")
         } catch {
             capturedBeforeProcess = nil
             let message = voiceErrorMessage(error)
@@ -1118,7 +1117,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         if (try? AccessibilityReplacement.captureTriggerOnly(trigger: Settings.voiceTrigger)) != nil {
             return Settings.voiceTrigger
         }
-        return Settings.trigger
+        return Settings.voiceTrigger
     }
 
     private func voiceTriggerDeleteCount(captured: AccessibilityCapturedText?, fallbackTrigger: String) -> Int {
@@ -1366,7 +1365,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     Performance-enhancing drugs for your typing. Six triggers, all inline, works in any app.
 
                     //   Fix your text. Grammar, spelling, keeps your voice.
-                    //   On a blank line: talk, then get smart brevity.
+                    //   Type ,,: talk, then get smart brevity.
                     ??   Ask AI anything. Answer replaces your text.
                     ;;   Translate to another language.
                     ==   Math and conversions. Just the answer.
