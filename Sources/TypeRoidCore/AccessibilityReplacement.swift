@@ -34,6 +34,10 @@ public struct AccessibilityCapturedText {
     fileprivate let element: AXUIElement
     fileprivate let fullValue: String
     fileprivate let replaceRange: Range<String.Index>
+
+    public var replaceCharacterCount: Int {
+        fullValue.distance(from: replaceRange.lowerBound, to: replaceRange.upperBound)
+    }
 }
 
 struct AccessibilityReplacementPlan {

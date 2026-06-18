@@ -99,6 +99,25 @@ public enum ClipboardReplacement {
         }
     }
 
+    public static func deleteCharactersBeforeCursorAndPaste(_ deleteCount: Int, text: String) {
+        let pasteboard = NSPasteboard.general
+        let previous = PasteboardSnapshot.capture(from: pasteboard)
+
+        for _ in 0..<max(deleteCount, 0) {
+            key(.delete)
+            usleep(8_000)
+        }
+
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        key("v", flags: [.maskCommand])
+
+        Task {
+            try? await Task.sleep(for: .milliseconds(350))
+            previous.restore(to: pasteboard)
+        }
+    }
+
     private static func key(_ specialKey: SpecialKey, flags: CGEventFlags = []) {
         guard let down = CGEvent(keyboardEventSource: nil, virtualKey: specialKey.rawValue, keyDown: true),
               let up = CGEvent(keyboardEventSource: nil, virtualKey: specialKey.rawValue, keyDown: false)

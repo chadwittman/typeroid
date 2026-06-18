@@ -1067,30 +1067,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private func handleVoiceBriefMode(captured: AccessibilityCapturedText?, fallbackTrigger: String) async throws {
         capturedBeforeProcess = captured
-        if let captured {
-            try? AccessibilityReplacement.replaceCapturedText(captured, with: "listening...")
-        } else {
-            status.show("// listening...", resetAfter: nil)
-        }
+        let deleteCount = voiceTriggerDeleteCount(captured: captured, fallbackTrigger: fallbackTrigger)
+        status.show("// listening...", resetAfter: nil)
 
         do {
             let transcript = try await transcribeVoice()
             lastCapturedSummary = "\(transcript.count) voice chars"
-            if let captured {
-                try? AccessibilityReplacement.replaceCapturedText(captured, with: "tightening...")
-            }
             status.show("// tightening...", resetAfter: nil)
 
             let brief = try await TextCleaner.process(transcript, mode: .smartBrevity)
             capturedBeforeProcess = nil
 
-            if let captured {
-                try AccessibilityReplacement.replaceCapturedText(captured, with: brief, selectReplacement: true)
-                setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: captured))
-            } else {
-                ClipboardReplacement.replaceCurrentSelection(with: brief)
-                setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: nil))
-            }
+            ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: brief)
+            setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: nil))
             status.show("// voice brief done")
         } catch {
             capturedBeforeProcess = nil
@@ -1098,16 +1087,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             if message == "Turn on Keyboard > Dictation" {
                 openKeyboardDictationSettings()
             }
-            if let captured {
-                try? AccessibilityReplacement.replaceCapturedText(captured, with: "")
-            } else {
-                for _ in 0..<fallbackTrigger.count {
-                    let down = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: true)
-                    down?.post(tap: .cghidEventTap)
-                    let up = CGEvent(keyboardEventSource: nil, virtualKey: 0x33, keyDown: false)
-                    up?.post(tap: .cghidEventTap)
-                }
-            }
+            ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: "")
             status.show(message)
         }
     }
@@ -1124,6 +1104,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             return Settings.voiceTrigger
         }
         return Settings.trigger
+    }
+
+    private func voiceTriggerDeleteCount(captured: AccessibilityCapturedText?, fallbackTrigger: String) -> Int {
+        guard let captured else { return fallbackTrigger.count }
+        return captured.replaceCharacterCount
     }
 
     private func processCapturedText(_ captured: AccessibilityCapturedText, mode: CleanMode, label: String) async throws -> Bool {
