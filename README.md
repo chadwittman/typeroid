@@ -23,13 +23,26 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | Trigger | What it does | Example |
 |---------|-------------|---------|
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
-| blank-line `//` | Voice brief | Type `//`, talk, pause; use ` //` if the app steals leading slash commands |
-| `,,` | Voice brief fallback | Use in Codex, Terminal, iTerm2, Warp, or any app with slash commands |
+| blank-line `//` | Voice brief | Type `//`, talk, pause. If an app steals leading slash commands, type ` //` instead |
+| `,,` | Voice brief | Reliable voice trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
 | `==` | Math & conversions | `15% of 340==` |
 | `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply inline |
 | `\|\|` | Rephrase | Paste canned/corporate text, hit `\|\|`, get it rewritten like a human said it |
+
+## Voice brief mode
+
+Voice brief mode is for raw thoughts you would rather say than type.
+
+- Type `,,` anywhere typeROID is enabled, talk, then pause. This is the most reliable voice trigger, especially in native Slack and command-line apps.
+- Type `//` on a blank line to start voice mode in normal text fields.
+- Type ` //` when the host app opens a slash-command UI for leading `/`.
+- Type `text //` to clean existing text. That does **not** start voice mode.
+
+Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID rewrites the transcript into a compact smart-brevity brief, deletes the trigger you typed, and pastes the result.
+
+For safety, typeROID does not activate in password fields, secure text fields, or browser address bars. Use it in the page or app text field instead.
 
 ## Install
 
@@ -90,7 +103,7 @@ typeROID is built for people who care about where their data goes.
 - **API keys in Keychain.** Stored encrypted in macOS Keychain. Never logged or printed.
 - **Sensitive data blocked.** SSNs, credit card numbers, passwords, and API keys are detected and blocked before they leave your machine.
 - **Secure text fields blocked.** typeROID won't activate in password fields or browser address bars.
-- **Zero dependencies.** No third-party packages. Just Apple frameworks. No supply chain risk.
+- **Small native core.** The app is Swift/AppKit. The Homebrew cask installs `whisper-cpp` and a tiny local model for voice transcription.
 - **Fully open source.** Every line is auditable. Read [SECURITY.md](SECURITY.md) for the full breakdown.
 
 > **Google Gemini note:** Google's API puts your API key in the URL. Your text is encrypted (HTTPS), but the key could be visible on public wifi or corporate VPNs with network inspection. OpenAI, Claude, and Groq send the key in fully encrypted headers. typeROID warns you when you select Google.
@@ -108,9 +121,9 @@ I say "hey" not "hello". No corporate language.
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
 2. Monitors your keyboard for triggers (`//`, `,,`, `??`, `;;`, `==`, `\\`, `||`)
-3. Captures the text via macOS Accessibility API
-4. Sends it to your AI provider with a focused system prompt
-5. Replaces your text in place, in whatever app you're using
+3. Captures text via macOS Accessibility API, or listens locally for voice brief mode
+4. Sends text or the local transcript to your AI provider with a focused system prompt
+5. Replaces your text in place, or deletes the voice trigger and pastes the brief
 
 For `\\` summarize mode: copy a thread to your clipboard, then type `\\`. typeROID reads your clipboard as context, generates a summary and a draft reply, and drops both inline where you're typing — summary visible, reply loaded to your clipboard for ⌘V.
 
