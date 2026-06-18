@@ -40,13 +40,6 @@ brew install --cask chadwittman/typeroid/typeroid
 ### Update
 
 ```bash
-brew update
-brew upgrade --cask typeroid
-```
-
-If Homebrew says the app is already installed but the menu bar version is old:
-
-```bash
 brew reinstall --cask chadwittman/typeroid/typeroid
 ```
 
