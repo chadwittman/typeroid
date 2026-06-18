@@ -802,7 +802,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         i wanted to circle back and touch base re the synergy we discussed re q4
 
-        Voice brief: place cursor on a blank line, type //, then talk.
+        Voice brief: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
         typeROID transcribes locally and rewrites what you said into smart brevity.
 
         ─────────────────────────────────────────
@@ -1483,7 +1483,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = await onboarding.show(step: .init(
                     title: voiceOK ? "Voice: on" : "Toggle voice on.",
                     body: voiceOK
-                        ? "Voice brief mode is ready. On a blank line, type //, talk, then pause."
+                        ? "Voice brief mode is ready. Type ,, anywhere typeROID is enabled, talk for up to a few minutes, then pause."
                         : "\(missing) still needs access.\n\nTurn typeROID on in System Settings, then come back and check again.",
                     buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
                     showBack: true

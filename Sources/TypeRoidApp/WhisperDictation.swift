@@ -48,7 +48,7 @@ final class WhisperDictation {
         runtimeURL != nil && modelURL != nil
     }
 
-    func transcribe(maxDuration: TimeInterval = 14, silenceAfter: TimeInterval = 1.4) async throws -> String {
+    func transcribe(maxDuration: TimeInterval = 180, silenceAfter: TimeInterval = 2.2) async throws -> String {
         guard await VoiceDictation.requestMicrophonePermission() else {
             throw WhisperDictationError.microphoneDenied
         }

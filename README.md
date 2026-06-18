@@ -42,6 +42,8 @@ Voice brief mode is for raw thoughts you would rather say than type.
 
 Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID rewrites the transcript into a compact smart-brevity brief, deletes the trigger you typed, and pastes the result.
 
+Voice brief mode records for up to about three minutes, or stops sooner after you pause for a couple seconds. It is designed for rambling, then compressing the ramble.
+
 For safety, typeROID does not activate in password fields, secure text fields, or browser address bars. Use it in the page or app text field instead.
 
 ## Install

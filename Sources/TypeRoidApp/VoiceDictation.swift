@@ -32,7 +32,7 @@ final class VoiceDictation: @unchecked Sendable {
     private var recognitionError: Error?
     private var recognitionFinished = false
 
-    func transcribe(maxDuration: TimeInterval = 14, silenceAfter: TimeInterval = 1.4) async throws -> String {
+    func transcribe(maxDuration: TimeInterval = 180, silenceAfter: TimeInterval = 2.2) async throws -> String {
         try await Self.requestPermissions()
 
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: Settings.languageLocaleIdentifier)),
