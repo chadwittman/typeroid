@@ -195,7 +195,7 @@ public enum Settings {
     private static let useStyleKey = "use_writing_style"
     private static let webSearchKey = "web_search_enabled"
 
-    public static let currentVersion = "0.2.23"
+    public static let currentVersion = "0.2.24"
     public static let updateCheckURL = "https://raw.githubusercontent.com/typeroid/typeroid/main/version.txt"
 
     public static var webSearchEnabled: Bool {

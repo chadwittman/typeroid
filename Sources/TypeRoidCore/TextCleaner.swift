@@ -391,30 +391,15 @@ public enum TextCleaner {
     }
 
     static func sanitizeScreenResponse(_ response: String, prompt: String) -> String {
-        guard isDraftingPrompt(prompt) else {
-            return response.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
         var text = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldSanitizeDraft = isDraftingPrompt(prompt) || hasDraftWrapper(text)
+        guard shouldSanitizeDraft else { return text }
+
         if let quoted = firstQuotedBlock(in: text) {
             return quoted
         }
 
-        let prefixes = [
-            "Sure! Here's a suggested reply:",
-            "Sure, here's a suggested reply:",
-            "Here's a suggested reply:",
-            "Here is a suggested reply:",
-            "Sure! Here's a response:",
-            "Sure, here's a response:",
-            "Here's a response:",
-            "Here is a response:",
-            "You could say:",
-            "Try this:",
-            "Suggested reply:",
-            "Response:"
-        ]
-        for prefix in prefixes {
+        for prefix in draftWrapperPrefixes {
             if text.lowercased().hasPrefix(prefix.lowercased()) {
                 text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 break
@@ -427,6 +412,8 @@ public enum TextCleaner {
         let lower = prompt.lowercased()
         return lower.contains("what should i say")
             || lower.contains("what do i say")
+            || lower.contains("reply for me")
+            || lower.contains("respond for me")
             || lower.contains("how should i reply")
             || lower.contains("how do i reply")
             || lower.contains("what should i reply")
@@ -435,6 +422,38 @@ public enum TextCleaner {
             || lower.contains("write a response")
             || lower.contains("reply to")
             || lower.contains("respond to")
+    }
+
+    private static let draftWrapperPrefixes = [
+        "Sure! Here's a suggested reply:",
+        "Sure, here's a suggested reply:",
+        "Here's a suggested reply:",
+        "Here is a suggested reply:",
+        "Sure! Here's a reply you can send:",
+        "Sure, here's a reply you can send:",
+        "Here's a reply you can send:",
+        "Here is a reply you can send:",
+        "Sure! Here's a reply:",
+        "Sure, here's a reply:",
+        "Here's a reply:",
+        "Here is a reply:",
+        "Sure! Here's a response you can send:",
+        "Sure, here's a response you can send:",
+        "Here's a response you can send:",
+        "Here is a response you can send:",
+        "Sure! Here's a response:",
+        "Sure, here's a response:",
+        "Here's a response:",
+        "Here is a response:",
+        "You could say:",
+        "Try this:",
+        "Suggested reply:",
+        "Response:"
+    ]
+
+    private static func hasDraftWrapper(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return draftWrapperPrefixes.contains { trimmed.hasPrefix($0.lowercased()) }
     }
 
     private static func firstQuotedBlock(in text: String) -> String? {

@@ -50,6 +50,28 @@ import Testing
     #expect(result == "Hi Carter, thanks for reaching out. I am available this weekend.")
 }
 
+@Test func screenDraftSanitizerHandlesReplyForMeWrapper() {
+    let raw = """
+    Sure! Here's a reply you can send:
+
+    "Thank you for your message. I appreciate the information and will get back to you shortly."
+    """
+    let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "reply for me")
+
+    #expect(result == "Thank you for your message. I appreciate the information and will get back to you shortly.")
+}
+
+@Test func screenDraftSanitizerUsesWrapperEvenForUnknownPrompt() {
+    let raw = """
+    Sure! Here's a reply:
+
+    "Sounds good. I can do this weekend."
+    """
+    let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "help")
+
+    #expect(result == "Sounds good. I can do this weekend.")
+}
+
 @Test func screenSanitizerLeavesNonDraftAnswersAlone() {
     let raw = "The visible error says the API key is missing."
     let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "what is going on here?")
