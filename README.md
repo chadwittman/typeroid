@@ -24,6 +24,7 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 |---------|-------------|---------|
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
 | `,,` | Voice brief | Reliable voice trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
+| `>>` | Ask with screen | `what is this error >>` sends the prompt plus a full-screen screenshot |
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
 | `==` | Math & conversions | `15% of 340==` |
@@ -44,6 +45,12 @@ Voice brief mode records for up to about three minutes, or stops sooner after yo
 While recording, typeROID temporarily lowers your Mac's output volume so local audio is less likely to leak into the transcript. It restores the original volume as soon as recording stops.
 
 For safety, typeROID does not activate in password fields, secure text fields, or browser address bars. Use it in the page or app text field instead.
+
+## Screen context mode
+
+Type a prompt, then `>>`, and typeROID sends that prompt plus a full-screen screenshot to your configured model. The answer replaces your prompt inline.
+
+Screen context mode is explicit. Screenshots are not used for `//` cleanup or `,,` voice brief. It currently works with OpenAI, Claude, and Gemini vision-capable models. It requires macOS Screen Recording permission.
 
 ## Install
 
@@ -121,9 +128,9 @@ I say "hey" not "hello". No corporate language.
 ## How it works
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
-2. Monitors your keyboard for triggers (`//`, `,,`, `??`, `;;`, `==`, `\\`, `||`)
-3. Captures text via macOS Accessibility API, or listens locally for voice brief mode
-4. Sends text or the local transcript to your AI provider with a focused system prompt
+2. Monitors your keyboard for triggers (`//`, `,,`, `>>`, `??`, `;;`, `==`, `\\`, `||`)
+3. Captures text via macOS Accessibility API, listens locally for voice brief mode, or captures the screen for explicit `>>` requests
+4. Sends text, local transcript, or explicit screen context to your AI provider with a focused system prompt
 5. Replaces your text in place, or deletes the voice trigger and pastes the brief
 
 For `\\` summarize mode: copy a thread to your clipboard, then type `\\`. typeROID reads your clipboard as context, generates a summary and a draft reply, and drops both inline where you're typing — summary visible, reply loaded to your clipboard for ⌘V.

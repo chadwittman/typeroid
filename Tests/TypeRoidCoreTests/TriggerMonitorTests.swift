@@ -94,6 +94,34 @@ import Testing
     #expect(modes == [.smartBrevity])
 }
 
+@Test func triggerMonitorFiresScreenTriggerAfterText() {
+    var modes: [CleanMode] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        screenTriggerProvider: { ">>" },
+        customCommandsProvider: { [] },
+        onTrigger: { modes.append($0) }
+    )
+
+    monitor.handleTypedCharacters("what is this error >>")
+
+    #expect(modes == [.screen])
+}
+
+@Test func triggerMonitorScreenTriggerBeatsCustomCommand() {
+    var modes: [CleanMode] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        screenTriggerProvider: { ">>" },
+        customCommandsProvider: { [">>"] },
+        onTrigger: { modes.append($0) }
+    )
+
+    monitor.handleTypedCharacters("look here >>")
+
+    #expect(modes == [.screen])
+}
+
 @Test func triggerMonitorStillFiresCleanTriggerAfterText() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(

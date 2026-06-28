@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.18</string>
+  <string>0.2.19</string>
   <key>CFBundleVersion</key>
-  <string>28</string>
+  <string>29</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -62,6 +62,8 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <string>TypeRoid uses the microphone when you start voice brief mode.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>TypeRoid uses on-device speech recognition to transcribe voice brief mode.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>TypeRoid captures the screen only when you use the screen context trigger.</string>
 </dict>
 </plist>
 PLIST

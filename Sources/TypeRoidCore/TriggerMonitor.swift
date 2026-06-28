@@ -11,6 +11,7 @@ public final class TriggerMonitor {
     private let mathTriggerProvider: () -> String       // == (math)
     private let rephraseTriggerProvider: () -> String   // || (rephrase/de-corp)
     private let voiceTriggerProvider: () -> String      // ,, (voice brief)
+    private let screenTriggerProvider: () -> String     // >> (prompt with screenshot)
     private let customCommandsProvider: () -> [String]  // available ..commands
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
@@ -28,6 +29,7 @@ public final class TriggerMonitor {
         mathTriggerProvider: @escaping () -> String = { Settings.mathTrigger },
         rephraseTriggerProvider: @escaping () -> String = { Settings.rephraseTrigger },
         voiceTriggerProvider: @escaping () -> String = { Settings.voiceTrigger },
+        screenTriggerProvider: @escaping () -> String = { Settings.screenTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
         onTrigger: @escaping (CleanMode) -> Void
@@ -39,6 +41,7 @@ public final class TriggerMonitor {
         self.mathTriggerProvider = mathTriggerProvider
         self.rephraseTriggerProvider = rephraseTriggerProvider
         self.voiceTriggerProvider = voiceTriggerProvider
+        self.screenTriggerProvider = screenTriggerProvider
         self.customCommandsProvider = customCommandsProvider
         self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
@@ -124,9 +127,10 @@ public final class TriggerMonitor {
         let mathTrigger = mathTriggerProvider()           // ==
         let rephraseTrigger = rephraseTriggerProvider()   // ||
         let voiceTrigger = voiceTriggerProvider()         // ,,
+        let screenTrigger = screenTriggerProvider()       // >>
         let customCommands = customCommandsProvider()
         let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
-        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, voiceTrigger.count, maxCustomLen, 1) + 256
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, voiceTrigger.count, screenTrigger.count, maxCustomLen, 1) + 256
 
         for character in string {
             if character.isNewline {
@@ -139,6 +143,16 @@ public final class TriggerMonitor {
         keypressCount += 1
         lastCharacters = String(repeating: ".", count: recentCharacters.count)
         onDebugEvent(.key("\(recentCharacters.count) buffered"))
+
+        // Check screen trigger (>>) before custom commands so the built-in
+        // visual context workflow is reserved.
+        if recentCharacters.hasSuffix(screenTrigger) {
+            recentCharacters.removeAll()
+            lastCharacters = ""
+            onDebugEvent(.triggerMatchedScreen)
+            onTrigger(.screen)
+            return
+        }
 
         // Check custom commands - filename IS the trigger, longest first
         for cmd in customCommands.sorted(by: { $0.count > $1.count }) {
@@ -238,4 +252,5 @@ public enum TriggerMonitorDebugEvent: Sendable {
     case triggerMatchedContext
     case triggerMatchedTranslate
     case triggerMatchedVoice
+    case triggerMatchedScreen
 }

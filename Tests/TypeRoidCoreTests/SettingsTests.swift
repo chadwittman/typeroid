@@ -25,6 +25,10 @@ struct SettingsTests {
         #expect(Settings.voiceTrigger == ",,")
     }
 
+    @Test func defaultScreenTriggerIsDoubleGreaterThan() {
+        #expect(Settings.screenTrigger == ">>")
+    }
+
     @Test func knownBrowsersAreTrackedForAddressBarSafety() {
         #expect(Settings.browserBundleIDs.contains("com.google.Chrome"))
         #expect(Settings.browserBundleIDs.contains("com.apple.Safari"))

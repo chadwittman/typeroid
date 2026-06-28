@@ -24,6 +24,7 @@ public enum CleanMode: Sendable, Equatable {
     case math       // == calculate or convert
     case rephrase   // || rewrite canned/corporate text in your own voice
     case smartBrevity // ,, spoken draft to concise written text
+    case screen     // >> prompt with full-screen screenshot context
     case custom(String) // ..commandname, user-defined commands
 
     public var isUnsafeInBrowserAddressBar: Bool {
@@ -242,6 +243,16 @@ public enum TextCleaner {
     Return only the translated text.
     """
 
+    static let screenInstruction = """
+    You are typeROID in screen mode.
+
+    The user typed a prompt and included a full-screen screenshot for context.
+    Use the screenshot to answer the prompt or help with what is visible.
+    Be concise and direct. Return plain text only.
+    Do not mention that you are looking at a screenshot unless it matters.
+    If the screenshot does not contain enough information, say what is missing.
+    """
+
     /// Load a custom command's system prompt from ~/.typeroid/commands/
     public static func loadCustomCommand(_ name: String) -> String? {
         let path = NSHomeDirectory() + "/.typeroid/commands/\(name).txt"
@@ -289,6 +300,8 @@ public enum TextCleaner {
             instruction = rephraseInstruction
         case .smartBrevity:
             instruction = smartBrevityInstruction
+        case .screen:
+            instruction = screenInstruction
         case .custom(let name):
             guard let customPrompt = loadCustomCommand(name) else {
                 throw TextCleanerError.apiError("No command for '\(name)'. Create ~/.typeroid/commands/\(name).txt with your prompt.")
@@ -335,6 +348,42 @@ public enum TextCleaner {
         try await process(text, mode: .clean)
     }
 
+    public static func processWithScreenshot(_ prompt: String, screenshotPNG: Data) async throws -> String {
+        let provider = Settings.provider
+        let apiKey = Settings.apiKey(for: provider)
+        if provider.requiresAPIKey {
+            guard let apiKey, !apiKey.isEmpty else {
+                throw TextCleanerError.missingAPIKey
+            }
+        }
+        if SensitiveFilter.containsSensitiveData(prompt) {
+            throw TextCleanerError.apiError("Blocked: sensitive data detected. typeROID won't send this to any API.")
+        }
+
+        var instruction = screenInstruction
+        instruction += "\nRespond in \(Settings.language)."
+        if Settings.useWritingStyle, let style = Settings.loadStyle() {
+            instruction += "\n\nThe user's writing style for reference:\n\(style)"
+        }
+
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Use the screenshot to explain what is going on and what I should do next."
+            : prompt
+        let model = Settings.model
+        let timeout: TimeInterval = provider == .ollama ? 120 : 45
+
+        switch provider {
+        case .openai:
+            return try await callOpenAIWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+        case .anthropic:
+            return try await callAnthropicWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+        case .google:
+            return try await callGoogleWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+        case .groq, .ollama:
+            throw TextCleanerError.unsupportedProvider
+        }
+    }
+
     // MARK: - OpenAI (Responses API)
     private static func callOpenAI(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false, timeout: TimeInterval = requestTimeout) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
@@ -353,6 +402,48 @@ public enum TextCleaner {
         if webSearch {
             body["tools"] = [["type": "web_search_preview"]]
         }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = timeout
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let outputText = json?["output_text"] as? String, !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let output = json?["output"] as? [[String: Any]] {
+            for item in output {
+                if let content = item["content"] as? [[String: Any]] {
+                    for c in content {
+                        if let t = c["text"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    }
+                }
+            }
+        }
+        throw TextCleanerError.invalidResponse
+    }
+
+    private static func callOpenAIWithImage(text: String, instruction: String, imagePNG: Data, model: String, apiKey: String, timeout: TimeInterval = requestTimeout) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let imageURL = "data:image/png;base64,\(imagePNG.base64EncodedString())"
+        let body: [String: Any] = [
+            "model": model,
+            "temperature": 0.1,
+            "input": [
+                ["role": "system", "content": [["type": "input_text", "text": instruction]]],
+                ["role": "user", "content": [
+                    ["type": "input_text", "text": text],
+                    ["type": "input_image", "image_url": imageURL]
+                ]]
+            ]
+        ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = timeout
 
@@ -408,6 +499,44 @@ public enum TextCleaner {
         throw TextCleanerError.invalidResponse
     }
 
+    private static func callAnthropicWithImage(text: String, instruction: String, imagePNG: Data, model: String, apiKey: String, timeout: TimeInterval = requestTimeout) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "model": model,
+            "max_tokens": 1024,
+            "system": instruction,
+            "messages": [[
+                "role": "user",
+                "content": [
+                    ["type": "text", "text": text],
+                    ["type": "image", "source": [
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": imagePNG.base64EncodedString()
+                    ]]
+                ]
+            ]]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = timeout
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let content = json?["content"] as? [[String: Any]],
+           let first = content.first,
+           let text = first["text"] as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        throw TextCleanerError.invalidResponse
+    }
+
     // MARK: - Google (Gemini)
     private static func callGoogle(text: String, instruction: String, model: String, apiKey: String, webSearch: Bool = false, timeout: TimeInterval = requestTimeout) async throws -> String {
         let urlString = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
@@ -424,6 +553,44 @@ public enum TextCleaner {
         if webSearch {
             body["tools"] = [["google_search": [:]]]
         }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = timeout
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try checkHTTPStatus(response, data: data)
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        if let candidates = json?["candidates"] as? [[String: Any]],
+           let first = candidates.first,
+           let content = first["content"] as? [String: Any],
+           let parts = content["parts"] as? [[String: Any]],
+           let part = parts.first,
+           let text = part["text"] as? String {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        throw TextCleanerError.invalidResponse
+    }
+
+    private static func callGoogleWithImage(text: String, instruction: String, imagePNG: Data, model: String, apiKey: String, timeout: TimeInterval = requestTimeout) async throws -> String {
+        let urlString = "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)"
+        var request = URLRequest(url: URL(string: urlString)!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+
+        let body: [String: Any] = [
+            "system_instruction": ["parts": [["text": instruction]]],
+            "contents": [[
+                "parts": [
+                    ["text": text],
+                    ["inline_data": [
+                        "mime_type": "image/png",
+                        "data": imagePNG.base64EncodedString()
+                    ]]
+                ]
+            ]],
+            "generationConfig": ["temperature": 0.1]
+        ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         request.timeoutInterval = timeout
 

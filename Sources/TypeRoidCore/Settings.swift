@@ -18,6 +18,7 @@ public enum Settings {
     private static let mathTriggerKey = "math_trigger"
     private static let rephraseTriggerKey = "rephrase_trigger"
     private static let voiceTriggerKey = "voice_trigger"
+    private static let screenTriggerKey = "screen_trigger"
 
     public static let defaultExcludedBundleIDs: Set<String> = [
         "com.apple.Terminal",
@@ -127,6 +128,16 @@ public enum Settings {
         }
     }
 
+    public static var screenTrigger: String {
+        get {
+            let value = UserDefaults.standard.string(forKey: screenTriggerKey) ?? ">>"
+            return value.isEmpty ? ">>" : value
+        }
+        set {
+            UserDefaults.standard.set(newValue.isEmpty ? ">>" : newValue, forKey: screenTriggerKey)
+        }
+    }
+
     public static var translateTarget: String {
         get {
             let v = UserDefaults.standard.string(forKey: translateTargetKey) ?? "Spanish"
@@ -184,7 +195,7 @@ public enum Settings {
     private static let useStyleKey = "use_writing_style"
     private static let webSearchKey = "web_search_enabled"
 
-    public static let currentVersion = "0.2.18"
+    public static let currentVersion = "0.2.19"
     public static let updateCheckURL = "https://raw.githubusercontent.com/typeroid/typeroid/main/version.txt"
 
     public static var webSearchEnabled: Bool {

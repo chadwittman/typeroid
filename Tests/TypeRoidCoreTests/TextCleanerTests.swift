@@ -44,8 +44,8 @@ import Testing
 
 @Test func allModesExist() {
     // Verify all modes compile and are distinct
-    let modes: [CleanMode] = [.clean, .query, .context, .translate, .math, .rephrase, .smartBrevity, .custom("test")]
-    #expect(modes.count == 8)
+    let modes: [CleanMode] = [.clean, .query, .context, .translate, .math, .rephrase, .smartBrevity, .screen, .custom("test")]
+    #expect(modes.count == 9)
 }
 
 @Test func browserAddressBarBlocksAllModes() {
@@ -56,5 +56,6 @@ import Testing
     #expect(CleanMode.math.isUnsafeInBrowserAddressBar)
     #expect(CleanMode.rephrase.isUnsafeInBrowserAddressBar)
     #expect(CleanMode.smartBrevity.isUnsafeInBrowserAddressBar)
+    #expect(CleanMode.screen.isUnsafeInBrowserAddressBar)
     #expect(CleanMode.custom("!!").isUnsafeInBrowserAddressBar)
 }

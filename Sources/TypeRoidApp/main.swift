@@ -189,6 +189,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             translateTriggerProvider: { Settings.translateTrigger },
             mathTriggerProvider: { Settings.mathTrigger },
             voiceTriggerProvider: { Settings.voiceTrigger },
+            screenTriggerProvider: { Settings.screenTrigger },
             onDebugEvent: { [weak self] event in Task { @MainActor in self?.handleDebugEvent(event) } }
         ) { [weak self] mode in Task { @MainActor in self?.handleTrigger(mode: mode) } }
         triggerMonitor?.start()
@@ -437,6 +438,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         mic.target = self; settingsMenu.addItem(mic)
         let speech = NSMenuItem(title: "Speech Recognition Settings", action: #selector(openSpeechRecognitionSettings), keyEquivalent: "")
         speech.target = self; settingsMenu.addItem(speech)
+        let screen = NSMenuItem(title: "Screen Recording Settings", action: #selector(openScreenRecordingSettings), keyEquivalent: "")
+        screen.target = self; settingsMenu.addItem(screen)
         let dictation = NSMenuItem(title: "Keyboard Dictation Settings", action: #selector(openKeyboardDictationSettings), keyEquivalent: "")
         dictation.target = self; settingsMenu.addItem(dictation)
 
@@ -634,6 +637,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
     @objc private func openSpeechRecognitionSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition")!)
+    }
+    @objc private func openScreenRecordingSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
     @objc private func openKeyboardDictationSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
@@ -918,6 +924,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .triggerMatchedContext: lastTriggerDebug = "\\\\ matched"
         case .triggerMatchedTranslate: lastTriggerDebug = ";; matched"
         case .triggerMatchedVoice: lastTriggerDebug = "\(Settings.voiceTrigger) matched"
+        case .triggerMatchedScreen: lastTriggerDebug = "\(Settings.screenTrigger) matched"
         }
         refreshDebugMenuItems()
     }
@@ -956,6 +963,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .math: label = "=="; verb = "calculating"
         case .rephrase: label = "||"; verb = "rephrasing"
         case .smartBrevity: label = Settings.voiceTrigger; verb = "briefing"
+        case .screen: label = Settings.screenTrigger; verb = "reading screen"
         case .custom(let name): label = name; verb = "running"
         }
 
@@ -1015,6 +1023,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .math: trigger = Settings.mathTrigger
                 case .rephrase: trigger = Settings.rephraseTrigger
                 case .smartBrevity: trigger = voiceBriefTriggerForFocusedElement()
+                case .screen: trigger = Settings.screenTrigger
                 case .context: trigger = Settings.rewriteTrigger
                 case .custom(let name): trigger = name
                 }
@@ -1022,6 +1031,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 if mode == .smartBrevity {
                     let captured = try? AccessibilityReplacement.captureTriggerOnly(trigger: trigger)
                     try await handleVoiceBriefMode(captured: captured, fallbackTrigger: trigger)
+                    return
+                }
+                if mode == .screen {
+                    try await handleScreenMode(trigger: trigger)
                     return
                 }
                 if mode == .clean, try await handleCleanOrVoiceMode(trigger: trigger) { return }
@@ -1051,10 +1064,30 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     status.show("\(label) done")
                 }
             } catch {
-                status.show("\(label) failed")
+                status.show(errorStatusMessage(error, label: label))
             }
             // no status.reset() here - show() auto-resets after 2s
         }
+    }
+
+    private func errorStatusMessage(_ error: Error, label: String) -> String {
+        if let screenError = error as? FullScreenCaptureError {
+            openScreenRecordingSettings()
+            return screenError.localizedDescription
+        }
+        if let cleanerError = error as? TextCleanerError {
+            switch cleanerError {
+            case .unsupportedProvider:
+                return "\(label) needs OpenAI, Claude, or Gemini"
+            case .missingAPIKey:
+                return "\(label) no API key — set one in the menu"
+            case .apiError(let message):
+                return message
+            case .invalidResponse:
+                return "\(label) got a weird response"
+            }
+        }
+        return "\(label) failed"
     }
 
     private func handleCleanOrVoiceMode(trigger: String) async throws -> Bool {
@@ -1096,6 +1129,30 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: "")
             status.show(message)
         }
+    }
+
+    private func handleScreenMode(trigger: String) async throws {
+        let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+        if captured.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            status.show("ask something before \(trigger)")
+            return
+        }
+
+        lastCapturedSummary = "\(captured.text.count) chars + screen"
+        capturedBeforeProcess = captured
+        status.show("\(trigger) reading screen...", resetAfter: nil)
+        startInlineLoading(in: captured, fallbackTrigger: trigger)
+        defer {
+            capturedBeforeProcess = nil
+            stopInlineLoading()
+        }
+
+        let screenshot = try FullScreenCapture.capturePNG()
+        status.show("\(trigger) thinking with screen...", resetAfter: nil)
+        let answer = try await TextCleaner.processWithScreenshot(captured.text, screenshotPNG: screenshot)
+        try AccessibilityReplacement.replaceCapturedText(captured, with: answer)
+        setReplacement(ReplacementRecord(original: captured.text, replacement: answer, accessibilityCaptured: captured))
+        status.show("\(trigger) done")
     }
 
     private func transcribeVoice(trigger: String) async throws -> String {
@@ -1276,7 +1333,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             if p == .openai || p == .google { return "on (\(p.displayName))" }
             return "on but \(p.displayName) doesn't support it — switch to OpenAI or Google"
         }()
-        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nVoice trigger: \(Settings.voiceTrigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
+        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nVoice trigger: \(Settings.voiceTrigger)\nScreen trigger: \(Settings.screenTrigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\>>): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
     }
 
     private func requestVoicePermissionsAndOpenSettingsIfNeeded() async {
