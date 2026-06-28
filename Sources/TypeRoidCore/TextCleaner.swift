@@ -252,6 +252,7 @@ public enum TextCleaner {
     If the user asks what to say, how to reply, or wants a message drafted, return only the ready-to-send message.
     Do not prefix drafts with phrases like "You could say", "Try this", or "Here's a response".
     Do not wrap drafts in quotation marks unless the quotation marks belong in the message.
+    For drafting prompts, the output should be directly pasteable into the current app with no intro or explanation.
     Do not mention that you are looking at a screenshot unless it matters.
     If the screenshot does not contain enough information, say what is missing.
     """
@@ -375,16 +376,95 @@ public enum TextCleaner {
         let model = Settings.model
         let timeout: TimeInterval = provider == .ollama ? 120 : 45
 
+        let raw: String
         switch provider {
         case .openai:
-            return try await callOpenAIWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callOpenAIWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
         case .anthropic:
-            return try await callAnthropicWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callAnthropicWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
         case .google:
-            return try await callGoogleWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callGoogleWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
         case .groq, .ollama:
             throw TextCleanerError.unsupportedProvider
         }
+        return sanitizeScreenResponse(raw, prompt: text)
+    }
+
+    static func sanitizeScreenResponse(_ response: String, prompt: String) -> String {
+        guard isDraftingPrompt(prompt) else {
+            return response.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var text = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let quoted = firstQuotedBlock(in: text) {
+            return quoted
+        }
+
+        let prefixes = [
+            "Sure! Here's a suggested reply:",
+            "Sure, here's a suggested reply:",
+            "Here's a suggested reply:",
+            "Here is a suggested reply:",
+            "Sure! Here's a response:",
+            "Sure, here's a response:",
+            "Here's a response:",
+            "Here is a response:",
+            "You could say:",
+            "Try this:",
+            "Suggested reply:",
+            "Response:"
+        ]
+        for prefix in prefixes {
+            if text.lowercased().hasPrefix(prefix.lowercased()) {
+                text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        return stripWrappingQuotes(text)
+    }
+
+    private static func isDraftingPrompt(_ prompt: String) -> Bool {
+        let lower = prompt.lowercased()
+        return lower.contains("what should i say")
+            || lower.contains("what do i say")
+            || lower.contains("how should i reply")
+            || lower.contains("how do i reply")
+            || lower.contains("what should i reply")
+            || lower.contains("draft")
+            || lower.contains("write a reply")
+            || lower.contains("write a response")
+            || lower.contains("reply to")
+            || lower.contains("respond to")
+    }
+
+    private static func firstQuotedBlock(in text: String) -> String? {
+        let patterns = [
+            #""([^"]{8,})""#,
+            #""([^"]{8,})""#,
+            #"“([^”]{8,})”"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, range: range),
+                  match.numberOfRanges > 1,
+                  let swiftRange = Range(match.range(at: 1), in: text) else { continue }
+            return String(text[swiftRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private static func stripWrappingQuotes(_ text: String) -> String {
+        var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pairs: [(Character, Character)] = [("\"", "\""), ("“", "”")]
+        for (open, close) in pairs {
+            if result.first == open, result.last == close {
+                result.removeFirst()
+                result.removeLast()
+                return result.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return result
     }
 
     // MARK: - OpenAI (Responses API)

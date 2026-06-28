@@ -32,6 +32,31 @@ import Testing
     #expect(instruction.contains("Return only the compacted message"))
 }
 
+@Test func screenDraftSanitizerReturnsQuotedReplyOnly() {
+    let raw = """
+    Sure! Here's a suggested reply:
+
+    "Hi Carter, I am available this weekend. Please let me know a convenient time. Looking forward to it. Thanks!"
+    """
+    let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "what should i say?")
+
+    #expect(result == "Hi Carter, I am available this weekend. Please let me know a convenient time. Looking forward to it. Thanks!")
+}
+
+@Test func screenDraftSanitizerRemovesUnquotedIntro() {
+    let raw = "You could say: Hi Carter, thanks for reaching out. I am available this weekend."
+    let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "how should i reply")
+
+    #expect(result == "Hi Carter, thanks for reaching out. I am available this weekend.")
+}
+
+@Test func screenSanitizerLeavesNonDraftAnswersAlone() {
+    let raw = "The visible error says the API key is missing."
+    let result = TextCleaner.sanitizeScreenResponse(raw, prompt: "what is going on here?")
+
+    #expect(result == raw)
+}
+
 @Test func allProvidersHaveEndpoints() {
     for provider in AIProvider.allCases {
         #expect(!provider.endpoint.isEmpty)
