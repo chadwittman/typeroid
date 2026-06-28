@@ -1386,6 +1386,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         return VoiceDictation.voiceReady
     }
 
+    private func screenRecordingReady() -> Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    private func requestScreenRecordingPermissionAndOpenSettingsIfNeeded() {
+        if !CGPreflightScreenCaptureAccess() {
+            _ = CGRequestScreenCaptureAccess()
+        }
+        if !CGPreflightScreenCaptureAccess() {
+            openScreenRecordingSettings()
+        }
+    }
+
     private func voiceErrorMessage(_ error: Error) -> String {
         if case VoiceDictationError.recognizerUnavailable = error {
             return "Turn on Keyboard > Dictation"
@@ -1449,10 +1462,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = await onboarding.show(step: .init(
                     title: "Type like a goblin. Send like a grown-up.",
                     body: """
-                    Performance-enhancing drugs for your typing. Six triggers, all inline, works in any app.
+                    Performance-enhancing drugs for your typing. Inline triggers that work in any app.
 
                     //   Fix your text. Grammar, spelling, keeps your voice.
                     //   Type ,,: talk, then get smart brevity.
+                    >>   Ask with screen. Prompt plus full-screen context.
                     ??   Ask AI anything. Answer replaces your text.
                     ;;   Translate to another language.
                     ==   Math and conversions. Just the answer.
@@ -1807,8 +1821,26 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 }
                 step = 13
 
-            // 13. Final screen
+            // 13. Screen Recording
             case 13:
+                let screenOK = screenRecordingReady()
+                let r = await onboarding.show(step: .init(
+                    title: screenOK ? "Screen context: on" : "Screen context",
+                    body: screenOK
+                        ? "Screen Recording is on. Type a prompt, then >>, and typeROID can answer with full-screen context."
+                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup or ,, voice brief.\n\nmacOS requires Screen Recording permission for this.",
+                    buttonTitles: screenOK ? ["Continue"] : ["Set Up Screen Context", "Skip"],
+                    showBack: true
+                ))
+                if r == OnboardingWindow.backResult { step = 12; continue }
+                if !screenOK && r == 0 {
+                    requestScreenRecordingPermissionAndOpenSettingsIfNeeded()
+                    continue
+                }
+                step = 14
+
+            // 14. Final screen
+            case 14:
                 _ = await onboarding.showDemo()
                 Settings.onboardingStep = 0
                 step = 0
