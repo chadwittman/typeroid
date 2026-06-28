@@ -1087,6 +1087,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 return "\(label) got a weird response"
             }
         }
+        if let accessibilityError = error as? AccessibilityReplacementError {
+            return accessibilityError.localizedDescription
+        }
+        if let clipboardError = error as? ClipboardReplacementError {
+            return clipboardError.localizedDescription
+        }
         return "\(label) failed"
     }
 
@@ -1132,26 +1138,50 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func handleScreenMode(trigger: String) async throws {
-        let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+        do {
+            let captured = try AccessibilityReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
+            if captured.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                status.show("ask something before \(trigger)")
+                return
+            }
+
+            lastCapturedSummary = "\(captured.text.count) chars + screen"
+            capturedBeforeProcess = captured
+            status.show("\(trigger) reading screen...", resetAfter: nil)
+            let screenshot = try FullScreenCapture.capturePNG()
+            startInlineLoading(in: captured, fallbackTrigger: trigger)
+            defer {
+                capturedBeforeProcess = nil
+                stopInlineLoading()
+            }
+
+            status.show("\(trigger) thinking with screen...", resetAfter: nil)
+            let answer = try await TextCleaner.processWithScreenshot(captured.text, screenshotPNG: screenshot)
+            try AccessibilityReplacement.replaceCapturedText(captured, with: answer)
+            setReplacement(ReplacementRecord(original: captured.text, replacement: answer, accessibilityCaptured: captured))
+            status.show("\(trigger) done")
+        } catch is AccessibilityReplacementError {
+            try await handleScreenModeWithClipboardFallback(trigger: trigger)
+        }
+    }
+
+    private func handleScreenModeWithClipboardFallback(trigger: String) async throws {
+        let captured = try await ClipboardReplacement.captureCurrentMessageBeforeTrigger(trigger: trigger)
         if captured.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             status.show("ask something before \(trigger)")
             return
         }
 
         lastCapturedSummary = "\(captured.text.count) chars + screen"
-        capturedBeforeProcess = captured
         status.show("\(trigger) reading screen...", resetAfter: nil)
-        startInlineLoading(in: captured, fallbackTrigger: trigger)
-        defer {
-            capturedBeforeProcess = nil
-            stopInlineLoading()
-        }
-
         let screenshot = try FullScreenCapture.capturePNG()
+        startInlineLoading(in: nil, fallbackTrigger: trigger)
+        defer { stopInlineLoading() }
+
         status.show("\(trigger) thinking with screen...", resetAfter: nil)
         let answer = try await TextCleaner.processWithScreenshot(captured.text, screenshotPNG: screenshot)
-        try AccessibilityReplacement.replaceCapturedText(captured, with: answer)
-        setReplacement(ReplacementRecord(original: captured.text, replacement: answer, accessibilityCaptured: captured))
+        ClipboardReplacement.replaceCurrentSelection(with: answer)
+        setReplacement(ReplacementRecord(original: captured.text, replacement: answer, accessibilityCaptured: nil))
         status.show("\(trigger) done")
     }
 
