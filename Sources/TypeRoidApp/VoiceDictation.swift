@@ -35,6 +35,7 @@ final class VoiceDictation: @unchecked Sendable {
     func transcribe(
         maxDuration: TimeInterval = 180,
         silenceAfter: TimeInterval = 2.2,
+        control: DictationControl? = nil,
         onRecordingFinished: (@MainActor () -> Void)? = nil
     ) async throws -> String {
         try await Self.requestPermissions()
@@ -84,13 +85,20 @@ final class VoiceDictation: @unchecked Sendable {
         }
 
         let started = Date()
+        let poll: Duration = control == nil ? .milliseconds(200) : .milliseconds(60)
         while !Task.isCancelled {
-            try await Task.sleep(for: .milliseconds(200))
+            try await Task.sleep(for: poll)
+            if control?.isCancelRequested == true {
+                throw CancellationError()
+            }
             if let recognitionError {
                 throw recognitionError
             }
 
             let trimmed = bestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            if control?.isStopRequested == true {
+                return try await finishStoppedRecognition(onRecordingFinished: onRecordingFinished)
+            }
             if recognitionFinished {
                 guard !trimmed.isEmpty else { throw VoiceDictationError.noSpeech }
                 await onRecordingFinished?()
@@ -108,6 +116,21 @@ final class VoiceDictation: @unchecked Sendable {
         }
 
         throw CancellationError()
+    }
+
+    private func finishStoppedRecognition(
+        onRecordingFinished: (@MainActor () -> Void)?
+    ) async throws -> String {
+        recognitionRequest?.endAudio()
+        let deadline = Date().addingTimeInterval(0.7)
+        while bestTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && Date() < deadline {
+            if Task.isCancelled { throw CancellationError() }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let trimmed = bestTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw VoiceDictationError.noSpeech }
+        await onRecordingFinished?()
+        return trimmed
     }
 
     private func stop() {
@@ -178,5 +201,37 @@ final class VoiceDictation: @unchecked Sendable {
         }
         let rms = sqrt(sum / Float(frameLength))
         return rms > 0.015
+    }
+}
+
+/// Shared stop/cancel flag for hold-to-talk and hands-free recording.
+final class DictationControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopRequested = false
+    private var cancelRequested = false
+
+    func stop() {
+        lock.lock()
+        stopRequested = true
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        stopRequested = true
+        cancelRequested = true
+        lock.unlock()
+    }
+
+    var isStopRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stopRequested
+    }
+
+    var isCancelRequested: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelRequested
     }
 }

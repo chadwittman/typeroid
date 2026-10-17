@@ -1,0 +1,92 @@
+import Testing
+@testable import TypeRoidCore
+
+@Test func functionHoldStartsPushToTalkAndReleaseEnds() {
+    var gesture = FunctionDictationGesture()
+
+    #expect(gesture.fnDown(at: 10).isEmpty)
+    #expect(gesture.holdElapsed(at: 10.22) == [.begin(.pushToTalk)])
+    #expect(gesture.fnUp(at: 11.4) == [.end])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionShortTapAsksForAHold() {
+    var gesture = FunctionDictationGesture()
+
+    #expect(gesture.fnDown(at: 1).isEmpty)
+    #expect(gesture.fnUp(at: 1.08).isEmpty)
+    #expect(gesture.secondTapWindowElapsed(at: 1.53) == [.hintHold])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionDoubleTapStartsHandsFreeUntilLaterPress() {
+    var gesture = FunctionDictationGesture()
+
+    #expect(gesture.fnDown(at: 5).isEmpty)
+    #expect(gesture.fnUp(at: 5.09).isEmpty)
+    #expect(gesture.fnDown(at: 5.28) == [.begin(.handsFree)])
+    #expect(gesture.fnUp(at: 5.36).isEmpty)
+    #expect(gesture.phase == .handsFree(startedAt: 5.28))
+    #expect(gesture.fnDown(at: 8) == [.end])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionThirdTapInsideCancelWindowCancelsHandsFree() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 2)
+    _ = gesture.fnUp(at: 2.07)
+    #expect(gesture.fnDown(at: 2.2) == [.begin(.handsFree)])
+    #expect(gesture.fnDown(at: 2.4) == [.cancel])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionReleaseBeforeTapCeilingKeepsRecordingForASecondTap() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 0)
+    #expect(gesture.holdElapsed(at: 0.22) == [.begin(.pushToTalk)])
+    #expect(gesture.fnUp(at: 0.35).isEmpty)
+    #expect(gesture.phase == .armingDoubleTap(upAt: 0.35, recording: true))
+    #expect(gesture.fnDown(at: 0.55) == [.promoteToHandsFree])
+    #expect(gesture.fnUp(at: 0.62).isEmpty)
+    #expect(gesture.fnDown(at: 2) == [.end])
+}
+
+@Test func functionAbandonedEarlyHoldDiscardsThenHints() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 0)
+    _ = gesture.holdElapsed(at: 0.22)
+    _ = gesture.fnUp(at: 0.3)
+    #expect(gesture.secondTapWindowElapsed(at: 0.75) == [.discard, .hintHold])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionChordBeforeHoldDoesNotDictate() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 4)
+    #expect(gesture.otherKey(at: 4.05).isEmpty)
+    #expect(gesture.phase == .idle)
+    #expect(gesture.holdElapsed(at: 4.3).isEmpty)
+}
+
+@Test func functionChordJustAfterHoldStartsDiscards() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 4)
+    #expect(gesture.holdElapsed(at: 4.22) == [.begin(.pushToTalk)])
+    #expect(gesture.otherKey(at: 4.3) == [.discard])
+    #expect(gesture.phase == .idle)
+}
+
+@Test func functionOtherKeyDuringEstablishedHoldDoesNotStop() {
+    var gesture = FunctionDictationGesture()
+
+    _ = gesture.fnDown(at: 1)
+    _ = gesture.holdElapsed(at: 1.22)
+    #expect(gesture.otherKey(at: 2).isEmpty)
+    #expect(gesture.phase == .pushToTalk(downAt: 1))
+    #expect(gesture.fnUp(at: 2.4) == [.end])
+}

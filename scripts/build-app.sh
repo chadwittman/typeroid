@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.24</string>
+  <string>0.2.25</string>
   <key>CFBundleVersion</key>
-  <string>34</string>
+  <string>35</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>
@@ -59,7 +59,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>NSAccessibilityUsageDescription</key>
   <string>TypeRoid uses Accessibility to select and replace the text you ask it to clean.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>TypeRoid uses the microphone when you start voice brief mode.</string>
+  <string>TypeRoid uses the microphone for fn dictation and voice brief mode.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>TypeRoid uses on-device speech recognition to transcribe voice brief mode.</string>
   <key>NSScreenCaptureUsageDescription</key>
@@ -113,9 +113,9 @@ if [ "$HAS_DEVELOPER_ID" -eq 1 ] && [ -n "${TYPEROID_APPLE_ID:-}" ] && [ -n "${T
         cd "$TAP_DIR"
         git add Casks/typeroid.rb
         git commit -m "typeROID $VERSION" 2>/dev/null || true
-        git push 2>/dev/null || true
         cd "$ROOT"
-        echo "Homebrew tap updated to $VERSION ($SHA)"
+        echo "Homebrew cask committed locally at $VERSION ($SHA)."
+        echo "Push the tap only after the GitHub release asset exists and its sha256 matches."
     else
         echo "Skipping Homebrew tap update (tap not cloned at $TAP_DIR)"
         echo "  sha256: $SHA"

@@ -13,13 +13,20 @@ public final class TriggerMonitor {
     private let voiceTriggerProvider: () -> String      // ,, (voice brief)
     private let screenTriggerProvider: () -> String     // >> (prompt with screenshot)
     private let customCommandsProvider: () -> [String]  // available ..commands
+    private let onFunctionKey: (FunctionKeyEdge) -> Void
+    private let shouldSwallowGlobe: () -> Bool
+    private let shouldSwallowEscape: () -> Bool
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var recentCharacters = ""
+    private var functionIsDown = false
     private(set) public var isActive = false
     private(set) public var lastCharacters = ""
     private(set) public var keypressCount = 0
+
+    private static let globeKeyCode: Int64 = 0x3F
+    private static let escapeKeyCode: Int64 = 0x35
 
     public init(
         triggerProvider: @escaping () -> String,
@@ -31,6 +38,9 @@ public final class TriggerMonitor {
         voiceTriggerProvider: @escaping () -> String = { Settings.voiceTrigger },
         screenTriggerProvider: @escaping () -> String = { Settings.screenTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
+        onFunctionKey: @escaping (FunctionKeyEdge) -> Void = { _ in },
+        shouldSwallowGlobe: @escaping () -> Bool = { false },
+        shouldSwallowEscape: @escaping () -> Bool = { false },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
         onTrigger: @escaping (CleanMode) -> Void
     ) {
@@ -43,41 +53,46 @@ public final class TriggerMonitor {
         self.voiceTriggerProvider = voiceTriggerProvider
         self.screenTriggerProvider = screenTriggerProvider
         self.customCommandsProvider = customCommandsProvider
+        self.onFunctionKey = onFunctionKey
+        self.shouldSwallowGlobe = shouldSwallowGlobe
+        self.shouldSwallowEscape = shouldSwallowEscape
         self.onDebugEvent = onDebugEvent
         self.onTrigger = onTrigger
     }
 
     public func start() {
-        let mask = CGEventMask(
-            (1 << CGEventType.keyDown.rawValue) |
-            (1 << CGEventType.tapDisabledByTimeout.rawValue) |
-            (1 << CGEventType.tapDisabledByUserInput.rawValue)
-        )
-        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
+        let keyDown = 1 << CGEventType.keyDown.rawValue
+        let keyUp = 1 << CGEventType.keyUp.rawValue
+        let flagsChanged = 1 << CGEventType.flagsChanged.rawValue
+        let tapTimeout = 1 << CGEventType.tapDisabledByTimeout.rawValue
+        let tapUser = 1 << CGEventType.tapDisabledByUserInput.rawValue
+        let mask = CGEventMask(keyDown | keyUp | flagsChanged | tapTimeout | tapUser)
+        let callback: CGEventTapCallBack = { _, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let monitor = Unmanaged<TriggerMonitor>.fromOpaque(refcon).takeUnretainedValue()
-
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if let eventTap = monitor.eventTap {
-                    CGEvent.tapEnable(tap: eventTap, enable: true)
-                }
-                monitor.onDebugEvent(.tapReenabled)
-                return Unmanaged.passUnretained(event)
-            }
-
-            guard type == .keyDown else { return Unmanaged.passUnretained(event) }
-            monitor.handle(event)
-            return Unmanaged.passUnretained(event)
+            return monitor.handleTap(type: type, event: event)
         }
 
-        eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .tailAppendEventTap,
-            options: .listenOnly,
-            eventsOfInterest: mask,
-            callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        )
+        let userInfo = Unmanaged.passUnretained(self).toOpaque()
+        // An active tap can swallow the globe key so macOS does not also open
+        // emoji or Apple Dictation. Listen-only is the fallback when that tap
+        // is not permitted; dictation still sees fn, but the key is not eaten.
+        let placements: [(CGEventTapLocation, CGEventTapPlacement, CGEventTapOptions)] = [
+            (.cghidEventTap, .headInsertEventTap, .defaultTap),
+            (.cgSessionEventTap, .headInsertEventTap, .defaultTap),
+            (.cgSessionEventTap, .tailAppendEventTap, .listenOnly)
+        ]
+        for (tap, place, options) in placements {
+            eventTap = CGEvent.tapCreate(
+                tap: tap,
+                place: place,
+                options: options,
+                eventsOfInterest: mask,
+                callback: callback,
+                userInfo: userInfo
+            )
+            if eventTap != nil { break }
+        }
 
         guard let eventTap else {
             isActive = false
@@ -102,6 +117,50 @@ public final class TriggerMonitor {
             CGEvent.tapEnable(tap: eventTap, enable: false)
         }
         isActive = false
+    }
+
+    private func handleTap(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let eventTap {
+                CGEvent.tapEnable(tap: eventTap, enable: true)
+            }
+            onDebugEvent(.tapReenabled)
+            return Unmanaged.passUnretained(event)
+        }
+
+        if type == .flagsChanged {
+            noteFunction(down: event.flags.contains(.maskSecondaryFn))
+            return Unmanaged.passUnretained(event)
+        }
+
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        if type == .keyDown || type == .keyUp, keyCode == Self.globeKeyCode {
+            noteFunction(down: type == .keyDown)
+            return shouldSwallowGlobe() ? nil : Unmanaged.passUnretained(event)
+        }
+
+        guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+
+        if keyCode == Self.escapeKeyCode, shouldSwallowEscape() {
+            onFunctionKey(.escape)
+            return nil
+        }
+        if functionIsDown {
+            onFunctionKey(.otherKey(Self.monotonicNow()))
+        }
+        handle(event)
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func noteFunction(down: Bool) {
+        guard down != functionIsDown else { return }
+        functionIsDown = down
+        let time = Self.monotonicNow()
+        onFunctionKey(down ? .down(time) : .up(time))
+    }
+
+    private static func monotonicNow() -> TimeInterval {
+        ProcessInfo.processInfo.systemUptime
     }
 
     private func handle(_ event: CGEvent) {
@@ -240,6 +299,13 @@ public final class TriggerMonitor {
         let flags = event.flags
         return flags.contains(.maskCommand) || flags.contains(.maskControl)
     }
+}
+
+public enum FunctionKeyEdge: Sendable {
+    case down(TimeInterval)
+    case up(TimeInterval)
+    case otherKey(TimeInterval)
+    case escape
 }
 
 public enum TriggerMonitorDebugEvent: Sendable {

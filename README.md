@@ -22,6 +22,7 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 
 | Trigger | What it does | Example |
 |---------|-------------|---------|
+| `fn` | Dictate | Hold to talk, release to paste. Double-tap for hands-free |
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
 | `,,` | Voice brief | Reliable voice trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
 | `>>` | Ask with screen | `what is this error >>` sends the prompt plus a full-screen screenshot |
@@ -31,11 +32,19 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 | `\\` | Summarize + reply | Copy a thread, type `\\`, get a summary and draft reply inline |
 | `\|\|` | Rephrase | Paste canned/corporate text, hit `\|\|`, get it rewritten like a human said it |
 
+## Fn dictation
+
+Hold fn and speak. Release, and cleaned speech pastes at the cursor. Double-tap fn for hands-free, then tap fn again to stop and paste. A third tap within half a second cancels. Escape cancels. A single short tap does not record.
+
+`,,` is still the voice brief. `//` never starts voice.
+
+While typeROID is enabled, fn is the dictation key. Turn typeROID off in the menu when you want the globe key for emoji or input switching.
+
 ## Voice brief mode
 
 Voice brief mode is for raw thoughts you would rather say than type.
 
-- Type `,,` anywhere typeROID is enabled, talk, then pause. This is the most reliable voice trigger, especially in native Slack and command-line apps.
+- Type `,,` anywhere typeROID is enabled, talk, then pause. This is the most reliable typed voice trigger, especially in native Slack and command-line apps.
 - Type `//` to clean existing text. It never starts voice mode.
 
 Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID rewrites the transcript into a compact smart-brevity brief, deletes the trigger you typed, and pastes the result.
@@ -128,10 +137,10 @@ I say "hey" not "hello". No corporate language.
 ## How it works
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
-2. Monitors your keyboard for triggers (`//`, `,,`, `>>`, `??`, `;;`, `==`, `\\`, `||`)
-3. Captures text via macOS Accessibility API, listens locally for voice brief mode, or captures the screen for explicit `>>` requests
+2. Monitors your keyboard for fn dictation and for triggers (`//`, `,,`, `>>`, `??`, `;;`, `==`, `\\`, `||`)
+3. Captures text via macOS Accessibility API, listens locally for fn dictation or voice brief mode, or captures the screen for explicit `>>` requests
 4. Sends text, local transcript, or explicit screen context to your AI provider with a focused system prompt
-5. Replaces your text in place, or deletes the voice trigger and pastes the brief
+5. Replaces your text in place, pastes fn dictation at the cursor, or deletes the voice trigger and pastes the brief
 
 For `\\` summarize mode: copy a thread to your clipboard, then type `\\`. typeROID reads your clipboard as context, generates a summary and a draft reply, and drops both inline where you're typing — summary visible, reply loaded to your clipboard for ⌘V.
 

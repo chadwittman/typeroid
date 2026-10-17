@@ -96,6 +96,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var activeTask: Task<Void, Never>?
     private var cancelMenuItem: NSMenuItem?
     private var capturedBeforeProcess: AccessibilityCapturedText?
+    private var fnGesture = FunctionDictationGesture()
+    private var fnHoldTask: Task<Void, Never>?
+    private var fnArmTask: Task<Void, Never>?
+    private var fnSession: FnDictationSession?
+    private var activityGeneration = 0
 
     private var appIcon: NSImage? {
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns") {
@@ -190,6 +195,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             mathTriggerProvider: { Settings.mathTrigger },
             voiceTriggerProvider: { Settings.voiceTrigger },
             screenTriggerProvider: { Settings.screenTrigger },
+            onFunctionKey: { [weak self] edge in self?.handleFunctionKey(edge) },
+            shouldSwallowGlobe: { [weak self] in self?.isEnabled ?? false },
+            shouldSwallowEscape: { [weak self] in self?.fnSession != nil },
             onDebugEvent: { [weak self] event in Task { @MainActor in self?.handleDebugEvent(event) } }
         ) { [weak self] mode in Task { @MainActor in self?.handleTrigger(mode: mode) } }
         triggerMonitor?.start()
@@ -304,6 +312,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let toggle = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled(_:)), keyEquivalent: "")
         toggle.state = isEnabled ? .on : .off; toggle.target = self
         menu.addItem(toggle)
+
+        let fnHint = NSMenuItem(title: "Fn: hold to talk, double-tap hands-free", action: nil, keyEquivalent: "")
+        fnHint.isEnabled = false
+        menu.addItem(fnHint)
 
         let undo = NSMenuItem(title: "Undo", action: #selector(undoLastRewrite), keyEquivalent: "z")
         undo.target = self
@@ -499,6 +511,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     @objc private func toggleEnabled(_ sender: NSMenuItem) {
         isEnabled.toggle(); sender.state = isEnabled ? .on : .off
+        if !isEnabled {
+            activityGeneration += 1
+            activeTask?.cancel()
+            activeTask = nil
+            fnSession?.control.cancel()
+            fnSession = nil
+            fnGesture.reset()
+            syncFunctionTimers()
+        }
         setStatusIcon()
     }
     @objc private func toggleOpenMenuAfterRewrite(_ sender: NSMenuItem) {
@@ -657,8 +678,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func cancelActiveTask() {
+        activityGeneration += 1
         activeTask?.cancel()
         activeTask = nil
+        fnSession?.control.cancel()
+        fnSession = nil
+        fnGesture.reset()
+        syncFunctionTimers()
         cancelMenuItem?.isEnabled = false
         loadingTimer?.invalidate()
         loadingTimer = nil
@@ -808,8 +834,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         i wanted to circle back and touch base re the synergy we discussed re q4
 
+        Fn dictation: hold fn, speak, release. Cleaned speech pastes at the cursor.
+        Double-tap fn for hands-free, then tap fn again to stop.
+        A third tap within half a second cancels. Escape cancels. A single short tap does not record.
+
         Voice brief: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
         typeROID transcribes locally and rewrites what you said into smart brevity.
+        // never starts voice.
 
         ─────────────────────────────────────────
         ?? — Ask AI anything. Answer replaces what you typed.
@@ -911,6 +942,204 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         """
     }
 
+    // MARK: - Function key dictation
+
+    private func handleFunctionKey(_ edge: FunctionKeyEdge) {
+        guard isEnabled || fnSession != nil else { return }
+        let actions: [FunctionDictationAction]
+        switch edge {
+        case .down(let time):
+            updateLastTypingApplication()
+            actions = fnGesture.fnDown(at: time)
+        case .up(let time):
+            actions = fnGesture.fnUp(at: time)
+        case .otherKey(let time):
+            actions = fnGesture.otherKey(at: time)
+        case .escape:
+            guard fnSession != nil else { return }
+            fnSession?.control.cancel()
+            fnGesture.reset()
+            syncFunctionTimers()
+            status.show("Cancelled")
+            return
+        }
+        applyFunctionActions(actions)
+    }
+
+    private func applyFunctionActions(_ actions: [FunctionDictationAction]) {
+        for action in actions {
+            switch action {
+            case .begin(let mode):
+                startFnSession(handsFree: mode == .handsFree)
+            case .promoteToHandsFree:
+                fnSession?.handsFree = true
+                status.show("fn on. tap fn to stop", resetAfter: nil)
+            case .end:
+                fnSession?.control.stop()
+            case .discard:
+                fnSession?.control.cancel()
+                status.reset()
+            case .cancel:
+                fnSession?.control.cancel()
+                status.show("Cancelled")
+            case .hintHold:
+                status.show("Hold fn to talk")
+            }
+        }
+        syncFunctionTimers()
+    }
+
+    private func syncFunctionTimers() {
+        fnHoldTask?.cancel()
+        fnArmTask?.cancel()
+        fnHoldTask = nil
+        fnArmTask = nil
+
+        switch fnGesture.phase {
+        case .pressed(let downAt):
+            let fireAt = downAt + fnGesture.holdStart
+            fnHoldTask = Task { @MainActor in
+                let delay = max(0, fireAt - ProcessInfo.processInfo.systemUptime)
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self.applyFunctionActions(self.fnGesture.holdElapsed(at: fireAt))
+            }
+        case .armingDoubleTap(let upAt, _):
+            let fireAt = upAt + fnGesture.doubleTapGap
+            fnArmTask = Task { @MainActor in
+                let delay = max(0, fireAt - ProcessInfo.processInfo.systemUptime)
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self.applyFunctionActions(self.fnGesture.secondTapWindowElapsed(at: fireAt))
+            }
+        case .idle, .pushToTalk, .handsFree:
+            break
+        }
+    }
+
+    private func startFnSession(handsFree: Bool) {
+        guard isEnabled else {
+            fnGesture.reset()
+            return
+        }
+        if activeTask != nil && fnSession == nil {
+            fnGesture.reset()
+            status.show("fn busy")
+            return
+        }
+        guard fnSession == nil else { return }
+
+        let session = FnDictationSession(handsFree: handsFree)
+        fnSession = session
+        cancelMenuItem?.isEnabled = true
+        status.show(handsFree ? "fn on. tap fn to stop" : "fn listening...", resetAfter: nil)
+
+        activityGeneration += 1
+        let generation = activityGeneration
+        activeTask = Task { @MainActor in
+            defer {
+                if self.activityGeneration == generation {
+                    if self.fnSession === session {
+                        self.fnSession = nil
+                    }
+                    self.activeTask = nil
+                    self.cancelMenuItem?.isEnabled = false
+                    switch self.fnGesture.phase {
+                    case .pushToTalk, .handsFree:
+                        self.fnGesture.reset()
+                        self.syncFunctionTimers()
+                    default:
+                        break
+                    }
+                }
+            }
+
+            if let blocked = self.fnDictationBlockedReason() {
+                session.control.cancel()
+                self.fnGesture.reset()
+                self.syncFunctionTimers()
+                self.status.show(blocked)
+                return
+            }
+
+            do {
+                guard await self.voiceReadyForFnDictation() else {
+                    session.control.cancel()
+                    self.fnGesture.reset()
+                    self.syncFunctionTimers()
+                    self.status.show("fn needs microphone access")
+                    return
+                }
+                if session.control.isCancelRequested { return }
+
+                let transcript = try await self.transcribeVoice(
+                    trigger: "fn",
+                    control: session.control,
+                    stopOnSilence: false
+                )
+                if session.control.isCancelRequested || Task.isCancelled { return }
+
+                self.status.show("fn cooking...", resetAfter: nil)
+                let text = try await self.cleanedDictation(transcript)
+                if session.control.isCancelRequested || Task.isCancelled { return }
+                self.insertDictationText(text, original: transcript)
+                self.status.show("fn done")
+            } catch is CancellationError {
+                return
+            } catch {
+                let message = self.voiceErrorMessage(error)
+                if message == "Turn on Keyboard > Dictation" {
+                    self.openKeyboardDictationSettings()
+                }
+                self.status.show(message)
+            }
+        }
+    }
+
+    private func fnDictationBlockedReason() -> String? {
+        updateLastTypingApplication()
+        guard isEnabled else { return "typeROID is off" }
+        guard AXIsProcessTrusted() else { return "fn needs Accessibility permission" }
+        let isExcluded = Settings.isExcluded(bundleID: lastTypingBundleID)
+        let isDefaultTerminal = lastTypingBundleID.map(Settings.defaultExcludedBundleIDs.contains) ?? false
+        if isExcluded && !isDefaultTerminal {
+            return "fn disabled in \(lastTypingAppName ?? "this app")"
+        }
+        if AccessibilityReplacement.focusedElementIsSecureTextEntry() {
+            return "fn won't touch password fields"
+        }
+        if AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) {
+            return "fn won't touch address bars"
+        }
+        return nil
+    }
+
+    private func voiceReadyForFnDictation() async -> Bool {
+        if voiceReadyForCurrentTranscriber() { return true }
+        await requestVoicePermissionsAndOpenSettingsIfNeeded()
+        return voiceReadyForCurrentTranscriber()
+    }
+
+    private func cleanedDictation(_ transcript: String) async throws -> String {
+        let canClean = !Settings.provider.requiresAPIKey || Settings.apiKey != nil
+        guard canClean else { return transcript }
+        do {
+            let cleaned = try await TextCleaner.process(transcript, mode: .dictation)
+            let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? transcript : trimmed
+        } catch let error as TextCleanerError {
+            if case .apiError(let message) = error, message.hasPrefix("Blocked") {
+                throw error
+            }
+            return transcript
+        }
+    }
+
+    private func insertDictationText(_ text: String, original: String) {
+        ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(0, text: text)
+        setReplacement(ReplacementRecord(original: original, replacement: text, accessibilityCaptured: nil))
+    }
+
     // MARK: - Trigger
 
     private func handleDebugEvent(_ event: TriggerMonitorDebugEvent) {
@@ -950,6 +1179,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private func handleTrigger(mode: CleanMode) {
         guard isEnabled else { return }
+        if fnSession != nil {
+            status.show("fn listening...")
+            return
+        }
         updateLastTypingApplication()
 
         // Compute label up front so blocked status messages can include it
@@ -963,9 +1196,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         case .math: label = "=="; verb = "calculating"
         case .rephrase: label = "||"; verb = "rephrasing"
         case .smartBrevity: label = Settings.voiceTrigger; verb = "briefing"
+        case .dictation: label = "fn"; verb = "dictating"
         case .screen: label = Settings.screenTrigger; verb = "reading screen"
         case .custom(let name): label = name; verb = "running"
         }
+        if case .dictation = mode { return }
 
         let isExcluded = Settings.isExcluded(bundleID: lastTypingBundleID)
         let isDefaultTerminalExclusion = lastTypingBundleID.map(Settings.defaultExcludedBundleIDs.contains) ?? false
@@ -980,10 +1215,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
         guard !Settings.provider.requiresAPIKey || Settings.apiKey != nil else { status.show("\(label) no API key — set one in the menu"); return }
 
+        activityGeneration += 1
+        let generation = activityGeneration
         activeTask = Task { @MainActor in
             defer {
-                self.activeTask = nil
-                self.cancelMenuItem?.isEnabled = false
+                if self.activityGeneration == generation {
+                    self.activeTask = nil
+                    self.cancelMenuItem?.isEnabled = false
+                }
             }
             cancelMenuItem?.isEnabled = true
             let loadingTimer: Timer?
@@ -1023,6 +1262,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .math: trigger = Settings.mathTrigger
                 case .rephrase: trigger = Settings.rephraseTrigger
                 case .smartBrevity: trigger = voiceBriefTriggerForFocusedElement()
+                case .dictation: return
                 case .screen: trigger = Settings.screenTrigger
                 case .context: trigger = Settings.rewriteTrigger
                 case .custom(let name): trigger = name
@@ -1185,7 +1425,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         status.show("\(trigger) done")
     }
 
-    private func transcribeVoice(trigger: String) async throws -> String {
+    private func transcribeVoice(
+        trigger: String,
+        control: DictationControl? = nil,
+        stopOnSilence: Bool = true
+    ) async throws -> String {
         let volumeDucker = OutputVolumeDucker()
         defer { volumeDucker.restore() }
 
@@ -1194,10 +1438,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             self?.status.show("\(trigger) transcribing...", resetAfter: nil)
         }
 
+        let silenceAfter: TimeInterval = stopOnSilence ? 2.2 : .greatestFiniteMagnitude
         if WhisperDictation.isConfigured {
-            return try await WhisperDictation().transcribe(onRecordingFinished: onRecordingFinished)
+            return try await WhisperDictation().transcribe(
+                silenceAfter: silenceAfter,
+                control: control,
+                onRecordingFinished: onRecordingFinished
+            )
         }
-        return try await VoiceDictation().transcribe(onRecordingFinished: onRecordingFinished)
+        return try await VoiceDictation().transcribe(
+            silenceAfter: silenceAfter,
+            control: control,
+            onRecordingFinished: onRecordingFinished
+        )
     }
 
     private func voiceBriefTriggerForFocusedElement() -> String {
@@ -1464,8 +1717,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     body: """
                     Performance-enhancing drugs for your typing. Inline triggers that work in any app.
 
-                    //   Fix your text. Grammar, spelling, keeps your voice.
-                    //   Type ,,: talk, then get smart brevity.
+                    fn   Hold to talk. Release, and cleaned speech pastes at the cursor.
+                    fn   Double-tap for hands-free. Tap again to stop. A quick third tap or Escape cancels.
+                    ,,   Voice brief. Talk, then pause, and get smart brevity.
+                    //   Fix your text. Grammar, spelling, keeps your voice. Never starts voice.
                     >>   Ask with screen. Prompt plus full-screen context.
                     ??   Ask AI anything. Answer replaces your text.
                     ;;   Translate to another language.
@@ -1564,10 +1819,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let hasVoicePermissions = voiceReadyForCurrentTranscriber()
                 let usingWhisper = WhisperDictation.isConfigured
                 let body = hasVoicePermissions
-                    ? "Microphone is on. Voice brief mode is ready."
+                    ? "Microphone is on. Hold fn to talk, or double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice."
                     : usingWhisper
-                        ? "Voice brief mode uses your microphone and local Whisper. Audio stays on this Mac.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
-                        : "Voice brief mode uses your microphone and Apple's Speech Recognition.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
+                        ? "Fn dictation and voice brief use your microphone and local Whisper. Audio stays on this Mac.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
+                        : "Fn dictation and voice brief use your microphone and Apple's Speech Recognition.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
                 let r = await onboarding.show(step: .init(
                     title: hasVoicePermissions ? "Voice: on" : "Voice permissions",
                     body: body,
@@ -1598,7 +1853,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = await onboarding.show(step: .init(
                     title: voiceOK ? "Voice: on" : "Toggle voice on.",
                     body: voiceOK
-                        ? "Voice brief mode is ready. Type ,, anywhere typeROID is enabled, talk for up to a few minutes, then pause."
+                        ? "Voice is ready. Hold fn to talk, or double-tap fn for hands-free. A third quick tap or Escape cancels. Type ,, for a voice brief. // never starts voice."
                         : "\(missing) still needs access.\n\nTurn typeROID on in System Settings, then come back and check again.",
                     buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
                     showBack: true
@@ -1828,7 +2083,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     title: screenOK ? "Screen context: on" : "Screen context",
                     body: screenOK
                         ? "Screen Recording is on. Type a prompt, then >>, and typeROID can answer with full-screen context."
-                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup or ,, voice brief.\n\nmacOS requires Screen Recording permission for this.",
+                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup, fn dictation, or ,, voice brief.\n\nmacOS requires Screen Recording permission for this.",
                     buttonTitles: screenOK ? ["Continue"] : ["Set Up Screen Context", "Skip"],
                     showBack: true
                 ))
@@ -1858,6 +2113,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         buildMenu()
         openDemoPad()
 
+    }
+}
+
+private final class FnDictationSession {
+    let control = DictationControl()
+    var handsFree: Bool
+
+    init(handsFree: Bool) {
+        self.handsFree = handsFree
     }
 }
 

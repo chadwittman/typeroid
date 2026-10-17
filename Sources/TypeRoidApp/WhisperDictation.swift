@@ -51,6 +51,7 @@ final class WhisperDictation {
     func transcribe(
         maxDuration: TimeInterval = 180,
         silenceAfter: TimeInterval = 2.2,
+        control: DictationControl? = nil,
         onRecordingFinished: (@MainActor () -> Void)? = nil
     ) async throws -> String {
         guard await VoiceDictation.requestMicrophonePermission() else {
@@ -72,12 +73,17 @@ final class WhisperDictation {
             try? FileManager.default.removeItem(at: outputBaseURL.appendingPathExtension("txt"))
         }
 
-        try await record(to: recordingURL, maxDuration: maxDuration, silenceAfter: silenceAfter)
+        try await record(to: recordingURL, maxDuration: maxDuration, silenceAfter: silenceAfter, control: control)
         await onRecordingFinished?()
         return try runWhisper(runtimeURL: runtimeURL, modelURL: modelURL, audioURL: recordingURL, outputBaseURL: outputBaseURL)
     }
 
-    private func record(to url: URL, maxDuration: TimeInterval, silenceAfter: TimeInterval) async throws {
+    private func record(
+        to url: URL,
+        maxDuration: TimeInterval,
+        silenceAfter: TimeInterval,
+        control: DictationControl?
+    ) async throws {
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
             AVSampleRateKey: 16_000,
@@ -97,15 +103,19 @@ final class WhisperDictation {
         let started = Date()
         var lastVoiceTime = Date()
         var heardVoice = false
+        let poll: Duration = control == nil ? .milliseconds(120) : .milliseconds(50)
 
         while !Task.isCancelled {
-            try await Task.sleep(for: .milliseconds(120))
+            try await Task.sleep(for: poll)
+            if control?.isCancelRequested == true {
+                throw CancellationError()
+            }
             recorder.updateMeters()
             if recorder.averagePower(forChannel: 0) > -42 {
                 heardVoice = true
                 lastVoiceTime = Date()
             }
-            if Date().timeIntervalSince(started) >= maxDuration {
+            if control?.isStopRequested == true || Date().timeIntervalSince(started) >= maxDuration {
                 break
             }
             if heardVoice && Date().timeIntervalSince(lastVoiceTime) >= silenceAfter {
@@ -113,6 +123,9 @@ final class WhisperDictation {
             }
         }
 
+        if Task.isCancelled || control?.isCancelRequested == true {
+            throw CancellationError()
+        }
         guard heardVoice else {
             throw WhisperDictationError.noSpeech
         }

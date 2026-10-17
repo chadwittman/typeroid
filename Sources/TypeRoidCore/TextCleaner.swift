@@ -24,6 +24,7 @@ public enum CleanMode: Sendable, Equatable {
     case math       // == calculate or convert
     case rephrase   // || rewrite canned/corporate text in your own voice
     case smartBrevity // ,, spoken draft to concise written text
+    case dictation  // fn hold / double-tap, speak and insert cleaned speech
     case screen     // >> prompt with full-screen screenshot context
     case custom(String) // ..commandname, user-defined commands
 
@@ -234,6 +235,20 @@ public enum TextCleaner {
     Return only the compacted message.
     """
 
+    static let dictationInstruction = """
+    You are typeROID in dictation mode.
+
+    The user spoke the message they want typed.
+    Write it the way they would send it.
+    Remove filler, false starts, stutters, and repeated words.
+    Add punctuation and capitalization.
+    Keep their wording, intent, tone, and length. Do not summarize.
+    Do not answer questions. If they asked a question, type the question.
+    Do not add facts, claims, or commentary.
+    Keep the language they spoke.
+    Return only the text to insert.
+    """
+
     static let translateInstruction = """
     You are typeROID in translate mode.
 
@@ -304,6 +319,8 @@ public enum TextCleaner {
             instruction = rephraseInstruction
         case .smartBrevity:
             instruction = smartBrevityInstruction
+        case .dictation:
+            instruction = dictationInstruction
         case .screen:
             instruction = screenInstruction
         case .custom(let name):
@@ -320,10 +337,10 @@ public enum TextCleaner {
 
         var fullInstruction = instruction
         // Pin response language for all non-translate modes so the AI doesn't mirror locale
-        if mode != .translate {
+        if mode != .translate && mode != .dictation {
             fullInstruction += "\nRespond in \(Settings.language)."
         }
-        if Settings.useWritingStyle, let style = Settings.loadStyle() {
+        if mode != .dictation, Settings.useWritingStyle, let style = Settings.loadStyle() {
             fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
         }
 
