@@ -24,7 +24,7 @@ public enum CleanMode: Sendable, Equatable {
     case math       // == calculate or convert
     case rephrase   // || rewrite canned/corporate text in your own voice
     case smartBrevity // ,, spoken draft to concise written text
-    case dictation  // fn hold / double-tap, speak and insert cleaned speech
+    case dictation  // fn hold / double-tap: paste what was said, minus filler
     case screen     // >> prompt with full-screen screenshot context
     case custom(String) // ..commandname, user-defined commands
 
@@ -170,12 +170,7 @@ public enum TextCleaner {
 
     public static func processWithContext(_ request: String, threadContext: String, mode: CleanMode = .context) async throws -> String {
         let provider = Settings.provider
-        let apiKey = Settings.apiKey(for: provider)
-        if provider.requiresAPIKey {
-            guard let apiKey, !apiKey.isEmpty else {
-                throw TextCleanerError.missingAPIKey
-            }
-        }
+        let apiKey = try await credential(for: provider)
 
         // Sensitive data check on thread context
         if SensitiveFilter.containsSensitiveData(threadContext) || SensitiveFilter.containsSensitiveData(request) {
@@ -197,10 +192,10 @@ public enum TextCleaner {
 
         let model = Settings.model
         switch provider {
-        case .openai: return try await callOpenAI(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
-        case .anthropic: return try await callAnthropic(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
-        case .google: return try await callGoogle(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
-        case .groq: return try await callGroq(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey ?? "")
+        case .openai: return try await callOpenAI(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .anthropic: return try await callAnthropic(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .google: return try await callGoogle(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
+        case .groq: return try await callGroq(text: fullPrompt, instruction: fullInstruction, model: model, apiKey: apiKey)
         case .ollama: return try await callOllama(text: fullPrompt, instruction: fullInstruction, model: model)
         }
     }
@@ -216,38 +211,110 @@ public enum TextCleaner {
     Return only the rewritten text.
     """
 
-    static let smartBrevityInstruction = """
-    You are typeROID in voice brief mode.
-
-    The user dictated a rough spoken statement, note, or request.
-    Your job is to compact the user's original message into smart brevity.
-    Do not answer the user.
-    Do not respond to the content.
-    Do not solve requests or explain anything.
-    If the transcript contains a question, preserve it as a concise question.
-    If the transcript contains an instruction, preserve it as a concise instruction.
-    Keep the user's intent, point of view, and audience.
-    Remove filler, false starts, throat-clearing, repetition, and hedging.
-    Make the message concise, clear, and useful.
-    Prefer short paragraphs or bullets only when bullets make the message easier to scan.
-    Do not add facts, claims, or ideas.
-    Do not make it sound corporate.
-    Return only the compacted message.
-    """
-
+    /// Spoken text, for fn dictation and for `,,`.
+    /// Filler comes out. The words they said stay. This does not summarize.
     static let dictationInstruction = """
     You are typeROID in dictation mode.
 
-    The user spoke the message they want typed.
-    Write it the way they would send it.
-    Remove filler, false starts, stutters, and repeated words.
-    Add punctuation and capitalization.
-    Keep their wording, intent, tone, and length. Do not summarize.
+    The user spoke the words they want typed.
+    Type those words.
+    Remove only filler sounds: um, uh, ah, er, hmm, and a word repeated in a stutter.
+    If they restart a phrase, keep the finished phrase and drop only the abandoned fragment.
+    Do not summarize.
+    Do not shorten.
+    Do not rephrase.
+    Do not delete sentences, ideas, or asides.
+    Keep their words, order, and meaning.
+    Add punctuation.
+    Capitalize the first letter of each sentence and the word I.
+    Capitalize names of people, places, and products in their normal written form.
+    Do not capitalize every word.
     Do not answer questions. If they asked a question, type the question.
     Do not add facts, claims, or commentary.
     Keep the language they spoke.
     Return only the text to insert.
     """
+
+    static let smartBrevityInstruction = dictationInstruction
+
+    /// Sentence capitals and the word I. Words stay as spoken.
+    public static func capitalizeSpoken(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        var result = ""
+        result.reserveCapacity(text.count)
+        var capitalizeNext = true
+        var index = text.startIndex
+        while index < text.endIndex {
+            let ch = text[index]
+            if ch.isNewline {
+                result.append(ch)
+                capitalizeNext = true
+            } else if ch.isWhitespace {
+                result.append(ch)
+            } else if ch.isNumber {
+                result.append(ch)
+                capitalizeNext = false
+            } else if ch.isLetter {
+                if capitalizeNext, ch.isLowercase, !startsLikeProductName(text, at: index) {
+                    result.append(contentsOf: String(ch).uppercased())
+                } else {
+                    result.append(ch)
+                }
+                capitalizeNext = false
+            } else {
+                result.append(ch)
+                if ch == "!" || ch == "?" || (ch == "." && shouldCapitalizeAfterPeriod(in: text, at: index)) {
+                    capitalizeNext = true
+                }
+            }
+            index = text.index(after: index)
+        }
+        return capitalizeStandaloneI(result)
+    }
+
+    /// "iPhone" stays. A lone "i" does not.
+    private static func startsLikeProductName(_ text: String, at index: String.Index) -> Bool {
+        let next = text.index(after: index)
+        guard next < text.endIndex else { return false }
+        let first = text[index]
+        guard first == "i" || first == "I" else { return false }
+        return text[next].isLetter && text[next].isUppercase
+    }
+
+    /// A period after a real word starts a new sentence. "a.m." and "3.14" do not.
+    private static func shouldCapitalizeAfterPeriod(in text: String, at period: String.Index) -> Bool {
+        guard period > text.startIndex else { return false }
+        let before = text.index(before: period)
+        guard text[before].isLetter else { return false }
+        guard before > text.startIndex else { return false }
+        return text[text.index(before: before)].isLetter
+    }
+
+    private static func capitalizeStandaloneI(_ text: String) -> String {
+        var result = ""
+        var word = ""
+        func flush() {
+            let lower = word.lowercased()
+            if lower == "i" || lower == "i'm" || lower == "i’m" || lower == "i'll" || lower == "i’ll"
+                || lower == "i've" || lower == "i’ve" || lower == "i'd" || lower == "i’d" {
+                result.append("I")
+                result.append(contentsOf: word.dropFirst())
+            } else {
+                result.append(word)
+            }
+            word.removeAll(keepingCapacity: true)
+        }
+        for ch in text {
+            if ch.isLetter || ch == "'" || ch == "’" {
+                word.append(ch)
+            } else {
+                flush()
+                result.append(ch)
+            }
+        }
+        flush()
+        return result
+    }
 
     static let translateInstruction = """
     You are typeROID in translate mode.
@@ -294,12 +361,7 @@ public enum TextCleaner {
 
     public static func process(_ text: String, mode: CleanMode = .clean, translateTarget: String? = nil) async throws -> String {
         let provider = Settings.provider
-        let apiKey = Settings.apiKey(for: provider)
-        if provider.requiresAPIKey {
-            guard let apiKey, !apiKey.isEmpty else {
-                throw TextCleanerError.missingAPIKey
-            }
-        }
+        let apiKey = try await credential(for: provider)
 
         let targetLang = translateTarget ?? Settings.translateTarget
 
@@ -337,10 +399,11 @@ public enum TextCleaner {
 
         var fullInstruction = instruction
         // Pin response language for all non-translate modes so the AI doesn't mirror locale
-        if mode != .translate && mode != .dictation {
+        let spoken = mode == .dictation || mode == .smartBrevity
+        if mode != .translate && !spoken {
             fullInstruction += "\nRespond in \(Settings.language)."
         }
-        if mode != .dictation, Settings.useWritingStyle, let style = Settings.loadStyle() {
+        if !spoken, Settings.useWritingStyle, let style = Settings.loadStyle() {
             fullInstruction += "\n\nThe user's writing style for reference:\n\(style)"
         }
 
@@ -350,18 +413,28 @@ public enum TextCleaner {
             && (provider == .openai || provider == .google)
         let timeout: TimeInterval = (provider == .ollama) ? 120 : (mode == .query) ? 12 : 30
 
+        let produced: String
         switch provider {
         case .openai:
-            return try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", webSearch: useWebSearch, timeout: timeout)
+            produced = try await callOpenAI(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
         case .anthropic:
-            return try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            produced = try await callAnthropic(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
         case .google:
-            return try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", webSearch: useWebSearch, timeout: timeout)
+            produced = try await callGoogle(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, webSearch: useWebSearch, timeout: timeout)
         case .groq:
-            return try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            produced = try await callGroq(text: text, instruction: fullInstruction, model: model, apiKey: apiKey, timeout: timeout)
         case .ollama:
-            return try await callOllama(text: text, instruction: fullInstruction, model: model, timeout: timeout)
+            produced = try await callOllama(text: text, instruction: fullInstruction, model: model, timeout: timeout)
         }
+        return spoken ? capitalizeSpoken(produced) : produced
+    }
+
+    private static func credential(for provider: AIProvider) async throws -> String {
+        guard provider.requiresAPIKey else { return "" }
+        guard let apiKey = await Settings.readAPIKey(for: provider), !apiKey.isEmpty else {
+            throw TextCleanerError.missingAPIKey
+        }
+        return apiKey
     }
 
     // Keep backward compat
@@ -371,12 +444,7 @@ public enum TextCleaner {
 
     public static func processWithScreenshot(_ prompt: String, screenshotPNG: Data) async throws -> String {
         let provider = Settings.provider
-        let apiKey = Settings.apiKey(for: provider)
-        if provider.requiresAPIKey {
-            guard let apiKey, !apiKey.isEmpty else {
-                throw TextCleanerError.missingAPIKey
-            }
-        }
+        let apiKey = try await credential(for: provider)
         if SensitiveFilter.containsSensitiveData(prompt) {
             throw TextCleanerError.apiError("Blocked: sensitive data detected. typeROID won't send this to any API.")
         }
@@ -396,11 +464,11 @@ public enum TextCleaner {
         let raw: String
         switch provider {
         case .openai:
-            raw = try await callOpenAIWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callOpenAIWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey, timeout: timeout)
         case .anthropic:
-            raw = try await callAnthropicWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callAnthropicWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey, timeout: timeout)
         case .google:
-            raw = try await callGoogleWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey ?? "", timeout: timeout)
+            raw = try await callGoogleWithImage(text: text, instruction: instruction, imagePNG: screenshotPNG, model: model, apiKey: apiKey, timeout: timeout)
         case .groq, .ollama:
             throw TextCleanerError.unsupportedProvider
         }

@@ -164,6 +164,20 @@ public enum AccessibilityReplacement {
     }
 
     public static func replaceCapturedText(_ captured: AccessibilityCapturedText, with replacement: String, selectReplacement: Bool = false) throws {
+        // A shell shows shift-left as garbage like ";2D". Backspace deletes the
+        // command, then the replacement is pasted.
+        if frontmostIsTerminal() {
+            let selectCount = captured.fullValue.distance(
+                from: captured.replaceRange.lowerBound,
+                to: captured.replaceRange.upperBound
+            )
+            guard selectCount <= 2000 else {
+                throw AccessibilityReplacementError.replacementFailed
+            }
+            backspaceAndPaste(count: selectCount, replacement: replacement)
+            return
+        }
+
         var updated = captured.fullValue
         updated.replaceSubrange(captured.replaceRange, with: replacement)
 
@@ -231,6 +245,44 @@ public enum AccessibilityReplacement {
         pasteText(replacement)
 
         restorePasteboard(contents: savedContents, after: 0.35)
+    }
+
+    private static let terminalBundleIDs: Set<String> = [
+        "com.apple.Terminal",
+        "com.googlecode.iterm2",
+        "dev.warp.Warp-Stable",
+    ]
+
+    /// A shell treats the loading placeholder as typed input. Callers should
+    /// show that placeholder in the status item instead.
+    public static func allowsInlinePlaceholder() -> Bool {
+        !frontmostIsTerminal()
+    }
+
+    private static func frontmostIsTerminal() -> Bool {
+        guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else { return false }
+        return terminalBundleIDs.contains(bundleID)
+    }
+
+    /// Newlines in a paste are commands. Keep the replacement on one line.
+    static func terminalReplacement(_ replacement: String) -> String {
+        replacement
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+    }
+
+    private static func backspaceAndPaste(count: Int, replacement: String) {
+        let safe = terminalReplacement(replacement)
+        let src = CGEventSource(stateID: .hidSystemState)
+        for _ in 0..<count {
+            let down = CGEvent(keyboardEventSource: src, virtualKey: 0x33, keyDown: true)
+            let up = CGEvent(keyboardEventSource: src, virtualKey: 0x33, keyDown: false)
+            down?.post(tap: .cghidEventTap)
+            up?.post(tap: .cghidEventTap)
+            usleep(8_000)
+        }
+        pasteText(safe)
     }
 
     private static func pasteText(_ text: String) {
@@ -400,5 +452,79 @@ public enum AccessibilityReplacement {
             text: message,
             replaceRange: adjustedStart..<triggerRange.upperBound
         )
+    }
+
+    /// The paragraph at the cursor, or the current selection. Used when a tool
+    /// is started from the pill instead of a typed trigger.
+    static func focusedMessagePlan(
+        in value: String,
+        cursor: String.Index,
+        selection: Range<String.Index>?
+    ) throws -> AccessibilityReplacementPlan {
+        if let selection, !selection.isEmpty {
+            return try trimmedPlan(in: value, range: selection)
+        }
+        return try trimmedPlan(in: value, range: currentMessageRange(in: value, endingAt: cursor))
+    }
+
+    public static func captureFocusedMessage() throws -> AccessibilityCapturedText {
+        let element = try focusedElement()
+        guard !isSecureTextEntry(element) else {
+            throw AccessibilityReplacementError.secureTextField
+        }
+
+        var valueObject: AnyObject?
+        let valueResult = AXUIElementCopyAttributeValue(
+            element,
+            kAXValueAttribute as CFString,
+            &valueObject
+        )
+        guard valueResult == .success, let value = valueObject as? String else {
+            throw AccessibilityReplacementError.unsupportedElement
+        }
+
+        var cursor = value.endIndex
+        var selection: Range<String.Index>?
+        var rangeObject: AnyObject?
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeObject) == .success,
+           let rangeObject,
+           CFGetTypeID(rangeObject) == AXValueGetTypeID() {
+            let axRange = rangeObject as! AXValue
+            var cfRange = CFRange(location: 0, length: 0)
+            if AXValueGetValue(axRange, .cfRange, &cfRange) {
+                let location = min(max(0, cfRange.location), value.count)
+                let length = max(0, min(cfRange.length, value.count - location))
+                let start = value.index(value.startIndex, offsetBy: location)
+                let end = value.index(start, offsetBy: length)
+                cursor = start
+                if length > 0 {
+                    selection = start..<end
+                }
+            }
+        }
+
+        let plan = try focusedMessagePlan(in: value, cursor: cursor, selection: selection)
+        return AccessibilityCapturedText(
+            text: plan.text,
+            element: element,
+            fullValue: value,
+            replaceRange: plan.replaceRange
+        )
+    }
+
+    private static func trimmedPlan(in value: String, range: Range<String.Index>) throws -> AccessibilityReplacementPlan {
+        let raw = value[range]
+        let text = String(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw AccessibilityReplacementError.emptyMessage
+        }
+        let leading = raw.prefix { $0.isWhitespace }.count
+        let trailing = raw.reversed().prefix { $0.isWhitespace }.count
+        let start = value.index(range.lowerBound, offsetBy: leading)
+        let end = value.index(range.upperBound, offsetBy: -trailing)
+        guard start < end else {
+            throw AccessibilityReplacementError.emptyMessage
+        }
+        return AccessibilityReplacementPlan(text: text, replaceRange: start..<end)
     }
 }

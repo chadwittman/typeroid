@@ -59,9 +59,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>NSAccessibilityUsageDescription</key>
   <string>TypeRoid uses Accessibility to select and replace the text you ask it to clean.</string>
   <key>NSMicrophoneUsageDescription</key>
-  <string>TypeRoid uses the microphone for fn dictation and voice brief mode.</string>
+  <string>TypeRoid uses the microphone for fn dictation.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
-  <string>TypeRoid uses on-device speech recognition to transcribe voice brief mode.</string>
+  <string>TypeRoid uses on-device speech recognition to transcribe fn dictation.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>TypeRoid captures the screen only when you use the screen context trigger.</string>
 </dict>

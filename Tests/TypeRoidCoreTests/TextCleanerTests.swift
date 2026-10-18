@@ -14,6 +14,17 @@ import Testing
     #expect(instruction.contains("Return only the corrected text."))
 }
 
+@Test func spokenCapitalizationUsesSentencesAndTheWordI() {
+    #expect(TextCleaner.capitalizeSpoken("i think we should ship this") == "I think we should ship this")
+    #expect(TextCleaner.capitalizeSpoken("hello. this is a test. i'm here") == "Hello. This is a test. I'm here")
+    #expect(TextCleaner.capitalizeSpoken("are you there?") == "Are you there?")
+    #expect(TextCleaner.capitalizeSpoken("it costs 3.50 dollars") == "It costs 3.50 dollars")
+    #expect(TextCleaner.capitalizeSpoken("meet at 9 a.m. today") == "Meet at 9 a.m. today")
+    #expect(TextCleaner.capitalizeSpoken("dr. smith said hi") == "Dr. Smith said hi")
+    #expect(TextCleaner.capitalizeSpoken("iPhone is ready") == "iPhone is ready")
+    #expect(TextCleaner.capitalizeSpoken("Hello. I am here.") == "Hello. I am here.")
+}
+
 @Test func queryInstructionExists() {
     let instruction = TextCleaner.queryInstruction
     #expect(instruction.contains("typeROID"))
@@ -21,15 +32,20 @@ import Testing
     #expect(instruction.contains("Return only the response"))
 }
 
-@Test func smartBrevityInstructionExists() {
-    let instruction = TextCleaner.smartBrevityInstruction
-    #expect(instruction.contains("voice brief"))
-    #expect(instruction.contains("smart brevity"))
-    #expect(instruction.contains("Do not answer the user."))
-    #expect(instruction.contains("Do not respond to the content."))
-    #expect(instruction.contains("preserve it as a concise question"))
-    #expect(instruction.contains("Remove filler"))
-    #expect(instruction.contains("Return only the compacted message"))
+@Test func spokenDictationKeepsTheirWords() {
+    for instruction in [TextCleaner.dictationInstruction, TextCleaner.smartBrevityInstruction] {
+        #expect(instruction.contains("um, uh, ah"))
+        #expect(instruction.contains("Do not summarize."))
+        #expect(instruction.contains("Do not shorten."))
+        #expect(instruction.contains("Do not rephrase."))
+        #expect(instruction.contains("Keep their words, order, and meaning."))
+        #expect(instruction.contains("Capitalize the first letter of each sentence and the word I."))
+        #expect(instruction.contains("Do not capitalize every word."))
+        #expect(instruction.contains("If they asked a question, type the question."))
+        #expect(!instruction.contains("smart brevity"))
+        #expect(!instruction.contains("compact"))
+    }
+    #expect(TextCleaner.smartBrevityInstruction == TextCleaner.dictationInstruction)
 }
 
 @Test func screenDraftSanitizerReturnsQuotedReplyOnly() {

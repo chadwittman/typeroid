@@ -20,11 +20,10 @@ public enum Settings {
     private static let voiceTriggerKey = "voice_trigger"
     private static let screenTriggerKey = "screen_trigger"
 
-    public static let defaultExcludedBundleIDs: Set<String> = [
-        "com.apple.Terminal",
-        "com.googlecode.iterm2",
-        "dev.warp.Warp-Stable"
-    ]
+    /// Nothing is excluded until the user turns an app off.
+    /// Terminals used to be on this list. Fn was carved back in, and the
+    /// other triggers stayed blocked. They all run there now.
+    public static let defaultExcludedBundleIDs: Set<String> = []
     public static let browserBundleIDs: Set<String> = [
         "com.apple.Safari",
         "com.google.Chrome",
@@ -50,6 +49,22 @@ public enum Settings {
     // MARK: - API Keys (per provider)
     public static func apiKey(for provider: AIProvider) -> String? {
         KeychainStore.read(account: provider.keychainAccount)
+    }
+
+    /// True when a key is stored, even if reading it still needs a keychain prompt.
+    /// Launch and the menu use this so a prompt cannot freeze the app.
+    public static var apiKeyIsAvailable: Bool {
+        guard provider.requiresAPIKey else { return true }
+        return KeychainStore.availability(account: provider.keychainAccount) != .missing
+    }
+
+    public static func apiKeyMissing(for provider: AIProvider) -> Bool {
+        provider.requiresAPIKey && KeychainStore.availability(account: provider.keychainAccount) == .missing
+    }
+
+    public static func readAPIKey(for provider: AIProvider) async -> String? {
+        if let key = apiKey(for: provider), !key.isEmpty { return key }
+        return await KeychainStore.readAllowingPrompt(account: provider.keychainAccount)
     }
 
     public static func setAPIKey(_ key: String?, for provider: AIProvider) {

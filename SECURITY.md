@@ -46,7 +46,7 @@ TypeRoid requires two macOS permissions:
 TypeRoid will NOT activate in:
 - **Password fields** (detected via Accessibility API secure text attributes)
 - **Browser address bars** (heuristic detection for Safari, Chrome, Firefox, Edge, Brave)
-- **Terminal apps** (Terminal, iTerm, Warp excluded by default)
+- **Terminal apps** are not excluded. A trigger can still rewrite the command line, so exclude Terminal from the menu if you do not want that.
 - **Any app you manually exclude** from the menu
 
 ## What TypeRoid Does NOT Do

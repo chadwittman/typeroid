@@ -24,7 +24,7 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 |---------|-------------|---------|
 | `fn` | Dictate | Hold to talk, release to paste. Double-tap for hands-free |
 | `//` | Fix your text | `heyy john cn u movee the mtg//` |
-| `,,` | Voice brief | Reliable voice trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
+| `,,` | Dictate | Same words as fn. Typed trigger for Slack, Codex, Terminal, iTerm2, Warp, and weird text fields |
 | `>>` | Ask with screen | `what is this error >>` sends the prompt plus a full-screen screenshot |
 | `??` | Ask AI anything | `whats 3pm EST in london??` |
 | `;;` | Translate | `hello how are you doing;;` |
@@ -34,22 +34,22 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 
 ## Fn dictation
 
-Hold fn and speak. Release, and cleaned speech pastes at the cursor. Double-tap fn for hands-free, then tap fn again to stop and paste. A third tap within half a second cancels. Escape cancels. A single short tap does not record.
+Hold fn and speak. Release, and what you said pastes at the cursor. Ums, uhs, and ahs come out. Sentences start with a capital, and the word I is capitalized. Nothing else is rewritten, and it does not summarize. Double-tap fn for hands-free, then tap fn again to stop and paste. A third tap within half a second cancels. Escape cancels. A single short tap does not record.
 
-`,,` is still the voice brief. `//` never starts voice.
+`,,` is the same dictation with a typed trigger. `//` never starts voice.
 
 While typeROID is enabled, fn is the dictation key. Turn typeROID off in the menu when you want the globe key for emoji or input switching.
 
-## Voice brief mode
+## Typed dictation
 
-Voice brief mode is for raw thoughts you would rather say than type.
+`,,` is for when you would rather say the words than type them, and fn is awkward.
 
-- Type `,,` anywhere typeROID is enabled, talk, then pause. This is the most reliable typed voice trigger, especially in native Slack and command-line apps.
+- Type `,,` anywhere typeROID is enabled, talk, then pause. This is the typed voice trigger, including in native Slack and command-line apps.
 - Type `//` to clean existing text. It never starts voice mode.
 
-Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID rewrites the transcript into a compact smart-brevity brief, deletes the trigger you typed, and pastes the result.
+Voice audio is transcribed locally with Whisper when installed through Homebrew. After transcription, typeROID removes ums and ahs, deletes the `,,` you typed, and pastes what you said. It does not summarize or rewrite the thought.
 
-Voice brief mode records for up to about three minutes, or stops sooner after you pause for a couple seconds. It is designed for rambling, then compressing the ramble.
+Typed dictation records for up to about three minutes, or stops sooner after you pause for a couple seconds.
 
 While recording, typeROID temporarily lowers your Mac's output volume so local audio is less likely to leak into the transcript. It restores the original volume as soon as recording stops.
 
@@ -59,7 +59,7 @@ For safety, typeROID does not activate in password fields, secure text fields, o
 
 Type a prompt, then `>>`, and typeROID sends that prompt plus a full-screen screenshot to your configured model. The answer replaces your prompt inline.
 
-Screen context mode is explicit. Screenshots are not used for `//` cleanup or `,,` voice brief. It currently works with OpenAI, Claude, and Gemini vision-capable models. It requires macOS Screen Recording permission.
+Screen context mode is explicit. Screenshots are not used for `//` cleanup, fn dictation, or `,,`. It currently works with OpenAI, Claude, and Gemini vision-capable models. It requires macOS Screen Recording permission.
 
 ## Install
 
@@ -75,7 +75,7 @@ brew install --cask chadwittman/typeroid/typeroid
 brew reinstall --cask --force chadwittman/typeroid/typeroid
 ```
 
-The Homebrew cask also installs `whisper-cpp` and downloads the local Whisper model used by voice brief mode.
+The Homebrew cask also installs `whisper-cpp` and downloads the local Whisper model used by dictation.
 
 ### Manual
 
@@ -138,9 +138,9 @@ I say "hey" not "hello". No corporate language.
 
 1. typeROID runs as a menu bar app (look for the `//` icon)
 2. Monitors your keyboard for fn dictation and for triggers (`//`, `,,`, `>>`, `??`, `;;`, `==`, `\\`, `||`)
-3. Captures text via macOS Accessibility API, listens locally for fn dictation or voice brief mode, or captures the screen for explicit `>>` requests
+3. Captures text via macOS Accessibility API, listens locally for fn or `,,` dictation, or captures the screen for explicit `>>` requests
 4. Sends text, local transcript, or explicit screen context to your AI provider with a focused system prompt
-5. Replaces your text in place, pastes fn dictation at the cursor, or deletes the voice trigger and pastes the brief
+5. Replaces your text in place, pastes fn dictation at the cursor, or deletes the ,, trigger and pastes what you said
 
 For `\\` summarize mode: copy a thread to your clipboard, then type `\\`. typeROID reads your clipboard as context, generates a summary and a draft reply, and drops both inline where you're typing — summary visible, reply loaded to your clipboard for ⌘V.
 

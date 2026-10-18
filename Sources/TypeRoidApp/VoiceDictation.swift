@@ -16,7 +16,7 @@ enum VoiceDictationError: LocalizedError {
         case .speechDenied:
             return "Speech recognition access is off."
         case .recognizerUnavailable:
-            return "Turn on Dictation in macOS Keyboard settings, then try voice brief again."
+            return "Turn on Dictation in macOS Keyboard settings, then try again."
         case .noSpeech:
             return "No speech was detected."
         }

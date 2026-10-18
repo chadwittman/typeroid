@@ -79,8 +79,9 @@ struct SettingsTests {
 
         Settings.resetExcludedBundleIDsToDefaults()
 
-        #expect(Settings.isExcluded(bundleID: "com.apple.Terminal") == true)
-        #expect(Settings.isExcluded(bundleID: "com.googlecode.iterm2") == true)
-        #expect(Settings.isExcluded(bundleID: "dev.warp.Warp-Stable") == true)
+        #expect(Settings.excludedBundleIDs.isEmpty)
+        #expect(Settings.isExcluded(bundleID: "com.apple.Terminal") == false)
+        #expect(Settings.isExcluded(bundleID: "com.googlecode.iterm2") == false)
+        #expect(Settings.isExcluded(bundleID: "dev.warp.Warp-Stable") == false)
     }
 }

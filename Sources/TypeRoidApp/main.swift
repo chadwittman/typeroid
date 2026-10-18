@@ -9,16 +9,19 @@ import TypeRoidCore
 @MainActor
 final class MenuBarStatus {
     private weak var statusItem: NSStatusItem?
+    private let juice: JuiceBar
     private var resetTask: Task<Void, Never>?
 
-    init(statusItem: NSStatusItem) {
+    init(statusItem: NSStatusItem, juice: JuiceBar) {
         self.statusItem = statusItem
+        self.juice = juice
     }
 
     func show(_ text: String, resetAfter: Double? = 2.0) {
         resetTask?.cancel()
         statusItem?.button?.image = nil
         statusItem?.button?.title = text
+        juice.show(status: text)
 
         if let delay = resetAfter {
             resetTask = Task { @MainActor in
@@ -32,6 +35,7 @@ final class MenuBarStatus {
         resetTask?.cancel()
         statusItem?.button?.title = ""
         statusItem?.button?.image = makeMenuBarIcon()
+        juice.rest()
     }
 }
 
@@ -74,6 +78,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private let onboarding = OnboardingWindow()
     private var openMenuAfterRewriteMenuItem: NSMenuItem?
     private var status: MenuBarStatus!
+    private let juiceBar = JuiceBar()
     private var latestAvailableVersion: String?
 
     private let loadingMessages = [
@@ -101,6 +106,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var fnArmTask: Task<Void, Never>?
     private var fnSession: FnDictationSession?
     private var activityGeneration = 0
+    private var didRequestKeyboardAccess = false
+    private var didOpenInputMonitoring = false
+    private var functionFlagDown = false
+    private var functionFlagTimer: Timer?
 
     private var appIcon: NSImage? {
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns") {
@@ -110,6 +119,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        juiceBar.onPick = { [weak self] pick in
+            self?.handlePill(pick)
+        }
+        juiceBar.onStop = { [weak self] in
+            self?.stopFromPill()
+        }
+        juiceBar.start()
+        startFunctionFlagPoll()
+
         // Enable Cmd+Q
         let mainMenu = NSMenu()
         let appMenuItem = NSMenuItem()
@@ -125,7 +143,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let appPath = Bundle.main.bundlePath
         let inApplications = appPath.hasPrefix("/Applications") || appPath.hasPrefix(NSHomeDirectory() + "/Applications")
 
-        let needsSetup = !Settings.onboardingComplete || (Settings.provider.requiresAPIKey && Settings.apiKey == nil)
+        let needsSetup = !Settings.onboardingComplete || !Settings.apiKeyIsAvailable
         if needsSetup {
             NSApp.setActivationPolicy(.regular)
             Task { @MainActor in
@@ -148,7 +166,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         // Safety: always try to start monitor even during onboarding
         // (in case user already granted permissions)
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(1))
+            requestKeyboardAccessIfNeeded()
             if triggerMonitor == nil || !triggerMonitor!.isActive {
                 startMonitor()
             }
@@ -169,24 +188,62 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Ask once per launch. The preview (and a fresh install) never hears fn
+    /// until Accessibility and Input Monitoring are on, and macOS only lists
+    /// the app after something actually tries to tap the keyboard.
+    private func requestKeyboardAccessIfNeeded() {
+        guard !didRequestKeyboardAccess else { return }
+        didRequestKeyboardAccess = true
+        if !AXIsProcessTrusted() {
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            if !AXIsProcessTrusted() {
+                status.show("fn needs Accessibility permission", resetAfter: 4)
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+            }
+        }
+    }
+
     private func startMonitorWithRetry() {
         startMonitor()
         // If permissions aren't ready yet, keep checking every 3 seconds
         if monitorStatus != "active" {
             Task { @MainActor in
-                for _ in 0..<20 { // try for up to 60 seconds
+                for _ in 0..<40 {
                     try? await Task.sleep(for: .seconds(3))
-                    if AXIsProcessTrusted() {
-                        startMonitor()
-                        if monitorStatus == "active" { return }
-                    }
+                    if triggerMonitor?.isActive == true { return }
+                    startMonitor()
+                    if monitorStatus == "active" { return }
                 }
             }
         }
     }
 
+    /// The globe key often never arrives on the event tap. The fn modifier
+    /// flag still changes, so poll it. The gesture ignores a repeated edge.
+    private func startFunctionFlagPoll() {
+        guard functionFlagTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pollFunctionFlag() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        functionFlagTimer = timer
+    }
+
+    private func pollFunctionFlag() {
+        let down = CGEventSource.flagsState(.hidSystemState).contains(.maskSecondaryFn)
+        guard down != functionFlagDown else { return }
+        functionFlagDown = down
+        let time = ProcessInfo.processInfo.systemUptime
+        fputs("typeroid fn \(down ? "down" : "up")\n", stderr)
+        fflush(stderr)
+        handleFunctionKey(down ? .down(time) : .up(time))
+    }
+
     private func startMonitor() {
-        if !AXIsProcessTrusted() { monitorStatus = "needs permission"; return }
+        if triggerMonitor?.isActive == true { return }
+        // Accessibility is required to paste. The keyboard tap is separate,
+        // and fn should still be heard once Input Monitoring is on.
         triggerMonitor = TriggerMonitor(
             triggerProvider: { Settings.trigger },
             contextTriggerProvider: { Settings.rewriteTrigger },
@@ -195,12 +252,21 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             mathTriggerProvider: { Settings.mathTrigger },
             voiceTriggerProvider: { Settings.voiceTrigger },
             screenTriggerProvider: { Settings.screenTrigger },
-            onFunctionKey: { [weak self] edge in self?.handleFunctionKey(edge) },
+            onFunctionKey: { [weak self] edge in
+                Task { @MainActor in self?.handleFunctionKey(edge) }
+            },
             shouldSwallowGlobe: { [weak self] in self?.isEnabled ?? false },
             shouldSwallowEscape: { [weak self] in self?.fnSession != nil },
             onDebugEvent: { [weak self] event in Task { @MainActor in self?.handleDebugEvent(event) } }
         ) { [weak self] mode in Task { @MainActor in self?.handleTrigger(mode: mode) } }
         triggerMonitor?.start()
+        // Say it once. Repeating this every retry pinned the bar on ALLOW FN
+        // and covered LISTENING while fn was already being seen.
+        if triggerMonitor?.isActive != true, fnSession == nil, !didOpenInputMonitoring {
+            didOpenInputMonitoring = true
+            status.show("fn needs Input Monitoring", resetAfter: 4)
+            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+        }
     }
 
     private func makeAlert(_ title: String, _ body: String) -> NSAlert {
@@ -295,13 +361,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func buildMenu() {
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-            status = MenuBarStatus(statusItem: statusItem)
+            status = MenuBarStatus(statusItem: statusItem, juice: juiceBar)
         }
         setStatusIcon()
 
         let menu = NSMenu()
 
-        let allGood = AXIsProcessTrusted() && (triggerMonitor?.isActive ?? false) && (!Settings.provider.requiresAPIKey || Settings.apiKey != nil)
+        let allGood = AXIsProcessTrusted() && (triggerMonitor?.isActive ?? false) && Settings.apiKeyIsAvailable
         let statusText = allGood ? "typeROID \(Settings.currentVersion)  ● ready" : "typeROID \(Settings.currentVersion)  ○ setup needed"
         let statusItem2 = NSMenuItem(title: statusText, action: allGood ? nil : #selector(rerunOnboarding), keyEquivalent: "")
         if !allGood { statusItem2.target = self }
@@ -511,6 +577,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     @objc private func toggleEnabled(_ sender: NSMenuItem) {
         isEnabled.toggle(); sender.state = isEnabled ? .on : .off
+        juiceBar.setBenched(!isEnabled)
         if !isEnabled {
             activityGeneration += 1
             activeTask?.cancel()
@@ -631,7 +698,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
     }
     @objc private func testCleanupAPI() {
-        guard !Settings.provider.requiresAPIKey || Settings.apiKey != nil else { status.show("No API key set"); return }
+        guard Settings.apiKeyIsAvailable else { status.show("No API key set"); return }
         Task { @MainActor in
             status.show("// testing...", resetAfter: nil)
             do {
@@ -786,9 +853,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func startInlineLoading(in captured: AccessibilityCapturedText?, fallbackTrigger: String) {
         let msg = loadingMessages.randomElement() ?? "typeROIDing"
         dotCount = 1
+        let inline = AccessibilityReplacement.allowsInlinePlaceholder() ? captured : nil
 
-        if let captured {
-            try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg).")
+        if let inline {
+            try? AccessibilityReplacement.replaceCapturedText(inline, with: "\(msg).")
         } else {
             status.show("\(fallbackTrigger) \(msg).", resetAfter: nil)
         }
@@ -799,8 +867,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 self.dotCount = (self.dotCount % 3) + 1
                 let dots = String(repeating: ".", count: self.dotCount)
-                if let captured {
-                    try? AccessibilityReplacement.replaceCapturedText(captured, with: "\(msg)\(dots)")
+                if let inline {
+                    try? AccessibilityReplacement.replaceCapturedText(inline, with: "\(msg)\(dots)")
                 } else {
                     self.status.show("\(fallbackTrigger) \(msg)\(dots)", resetAfter: nil)
                 }
@@ -834,12 +902,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
         i wanted to circle back and touch base re the synergy we discussed re q4
 
-        Fn dictation: hold fn, speak, release. Cleaned speech pastes at the cursor.
+        Fn dictation: hold fn, speak, release. Ums and ahs come out. The rest of what you said pastes at the cursor.
         Double-tap fn for hands-free, then tap fn again to stop.
         A third tap within half a second cancels. Escape cancels. A single short tap does not record.
 
-        Voice brief: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
-        typeROID transcribes locally and rewrites what you said into smart brevity.
+        Voice: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
+        typeROID transcribes locally, drops ums and ahs, and pastes what you said. It does not summarize.
         // never starts voice.
 
         ─────────────────────────────────────────
@@ -1100,9 +1168,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         updateLastTypingApplication()
         guard isEnabled else { return "typeROID is off" }
         guard AXIsProcessTrusted() else { return "fn needs Accessibility permission" }
-        let isExcluded = Settings.isExcluded(bundleID: lastTypingBundleID)
-        let isDefaultTerminal = lastTypingBundleID.map(Settings.defaultExcludedBundleIDs.contains) ?? false
-        if isExcluded && !isDefaultTerminal {
+        if Settings.isExcluded(bundleID: lastTypingBundleID) {
             return "fn disabled in \(lastTypingAppName ?? "this app")"
         }
         if AccessibilityReplacement.focusedElementIsSecureTextEntry() {
@@ -1121,17 +1187,18 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func cleanedDictation(_ transcript: String) async throws -> String {
-        let canClean = !Settings.provider.requiresAPIKey || Settings.apiKey != nil
-        guard canClean else { return transcript }
+        let spoken = TextCleaner.capitalizeSpoken(transcript)
+        let canClean = Settings.apiKeyIsAvailable
+        guard canClean else { return spoken }
         do {
             let cleaned = try await TextCleaner.process(transcript, mode: .dictation)
             let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? transcript : trimmed
+            return trimmed.isEmpty ? spoken : trimmed
         } catch let error as TextCleanerError {
             if case .apiError(let message) = error, message.hasPrefix("Blocked") {
                 throw error
             }
-            return transcript
+            return spoken
         }
     }
 
@@ -1144,8 +1211,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private func handleDebugEvent(_ event: TriggerMonitorDebugEvent) {
         switch event {
-        case .tapStarted: monitorStatus = "active"
-        case .tapCreationFailed: monitorStatus = "blocked"; status.show("Keyboard monitor failed. Check permissions.")
+        case .tapStarted:
+            monitorStatus = "active"
+            if fnSession == nil { status.reset() }
+        case .tapCreationFailed:
+            monitorStatus = "blocked"
         case .tapReenabled: monitorStatus = "re-enabled"
         case .key(let k): keypressCount += 1; lastTriggerDebug = k.isEmpty ? "empty" : k; updateLastTypingApplication(); setStatusIcon()
         case .triggerMatched: lastTriggerDebug = "// matched"
@@ -1202,10 +1272,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
         if case .dictation = mode { return }
 
-        let isExcluded = Settings.isExcluded(bundleID: lastTypingBundleID)
-        let isDefaultTerminalExclusion = lastTypingBundleID.map(Settings.defaultExcludedBundleIDs.contains) ?? false
-        let allowVoiceInTerminal = mode == .smartBrevity && isDefaultTerminalExclusion
-        guard !isExcluded || allowVoiceInTerminal else {
+        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
             status.show("\(label) disabled in \(lastTypingAppName ?? "this app")"); return }
         guard AXIsProcessTrusted() else { status.show("\(label) needs Accessibility permission"); return }
         guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
@@ -1213,7 +1280,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         if AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) {
             status.show("\(label) won't touch address bars"); return
         }
-        guard !Settings.provider.requiresAPIKey || Settings.apiKey != nil else { status.show("\(label) no API key — set one in the menu"); return }
+        guard Settings.apiKeyIsAvailable else { status.show("\(label) no API key — set one in the menu"); return }
 
         activityGeneration += 1
         let generation = activityGeneration
@@ -1304,10 +1371,179 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     status.show("\(label) done")
                 }
             } catch {
-                status.show(errorStatusMessage(error, label: label))
+                let message = errorStatusMessage(error, label: label)
+                lastRewriteStatus = String(message.prefix(60))
+                refreshDebugMenuItems()
+                status.show(message, resetAfter: 4)
             }
             // no status.reset() here - show() auto-resets after 2s
         }
+    }
+
+    private func handlePill(_ pick: JuicePick) {
+        if pick == .talk {
+            if fnSession != nil {
+                fnSession?.control.stop()
+            } else {
+                startFnSession(handsFree: true)
+            }
+            return
+        }
+
+        let mode: CleanMode
+        let label: String
+        let verb: String
+        switch pick {
+        case .talk:
+            return
+        case .fix:
+            mode = .clean; label = "//"; verb = "fixing"
+        case .math:
+            mode = .math; label = "=="; verb = "calculating"
+        case .ask:
+            mode = .query; label = "??"; verb = "asking"
+        case .translate:
+            mode = .translate; label = ";;"; verb = "translating"
+        case .rephrase:
+            mode = .rephrase; label = "||"; verb = "rephrasing"
+        case .screen:
+            mode = .screen; label = ">>"; verb = "reading screen"
+        case .thread:
+            mode = .context; label = "\\\\"; verb = "reading"
+        }
+        beginFocusedTool(mode: mode, label: label, verb: verb)
+    }
+
+    private func stopFromPill() {
+        if fnSession != nil {
+            fnSession?.control.stop()
+            return
+        }
+        if activeTask != nil {
+            cancelActiveTask()
+        }
+    }
+
+    /// Runs a tool on the focused paragraph or selection. No trigger has to be typed.
+    private func beginFocusedTool(mode: CleanMode, label: String, verb: String) {
+        guard isEnabled else { return }
+        if fnSession != nil {
+            status.show("fn listening...")
+            return
+        }
+        if activeTask != nil {
+            status.show("\(label) busy")
+            return
+        }
+        updateLastTypingApplication()
+        guard !Settings.isExcluded(bundleID: lastTypingBundleID) else {
+            status.show("\(label) disabled in \(lastTypingAppName ?? "this app")", resetAfter: 4)
+            return
+        }
+        guard AXIsProcessTrusted() else {
+            status.show("\(label) needs Accessibility permission", resetAfter: 4)
+            return
+        }
+        guard !AccessibilityReplacement.focusedElementIsSecureTextEntry() else {
+            status.show("\(label) won't touch password fields", resetAfter: 4)
+            return
+        }
+        if AccessibilityReplacement.focusedElementLooksLikeBrowserAddressBar(bundleID: lastTypingBundleID) {
+            status.show("\(label) won't touch address bars", resetAfter: 4)
+            return
+        }
+        guard Settings.apiKeyIsAvailable else {
+            status.show("\(label) no API key — set one in the menu", resetAfter: 4)
+            return
+        }
+
+        activityGeneration += 1
+        let generation = activityGeneration
+        activeTask = Task { @MainActor in
+            defer {
+                if self.activityGeneration == generation {
+                    self.activeTask = nil
+                    self.cancelMenuItem?.isEnabled = false
+                }
+            }
+            cancelMenuItem?.isEnabled = true
+            status.show("\(label) \(verb)...", resetAfter: nil)
+            do {
+                switch mode {
+                case .context:
+                    try await self.handleContextFromFocus()
+                case .screen:
+                    try await self.handleScreenFromFocus()
+                default:
+                    let captured = try AccessibilityReplacement.captureFocusedMessage()
+                    _ = try await self.processCapturedText(captured, mode: mode, label: label)
+                }
+            } catch AccessibilityReplacementError.emptyMessage {
+                status.show("nothing to \(verb)")
+            } catch {
+                let message = self.errorStatusMessage(error, label: label)
+                self.lastRewriteStatus = String(message.prefix(60))
+                self.refreshDebugMenuItems()
+                status.show(message, resetAfter: 4)
+            }
+        }
+    }
+
+    private func handleScreenFromFocus() async throws {
+        let captured: AccessibilityCapturedText
+        do {
+            captured = try AccessibilityReplacement.captureFocusedMessage()
+        } catch AccessibilityReplacementError.emptyMessage {
+            status.show("ask something before >>")
+            return
+        }
+        lastCapturedSummary = "\(captured.text.count) chars + screen"
+        capturedBeforeProcess = captured
+        status.show(">> reading screen...", resetAfter: nil)
+        let screenshot = try FullScreenCapture.capturePNG()
+        startInlineLoading(in: captured, fallbackTrigger: ">>")
+        defer {
+            capturedBeforeProcess = nil
+            stopInlineLoading()
+        }
+        status.show(">> thinking with screen...", resetAfter: nil)
+        let answer = try await TextCleaner.processWithScreenshot(captured.text, screenshotPNG: screenshot)
+        try AccessibilityReplacement.replaceCapturedText(captured, with: answer)
+        setReplacement(ReplacementRecord(original: captured.text, replacement: answer, accessibilityCaptured: captured))
+        lastRewriteStatus = ">> ok"
+        status.show(">> done")
+    }
+
+    private func handleContextFromFocus() async throws {
+        let clipboardContext = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !clipboardContext.isEmpty else {
+            status.show("\\\\ copy a thread first")
+            return
+        }
+
+        let captured = try? AccessibilityReplacement.captureFocusedMessage()
+        capturedBeforeProcess = captured
+        if let captured {
+            startInlineLoading(in: captured, fallbackTrigger: "\\\\")
+        }
+        status.show("\\\\ thinking...", resetAfter: nil)
+        let raw = try await TextCleaner.processWithContext(captured?.text ?? "", threadContext: clipboardContext)
+        stopInlineLoading()
+        capturedBeforeProcess = nil
+
+        let (summary, reply) = parseContextJSON(raw)
+        let combined = reply.isEmpty ? summary : "\(summary)\n\n— Suggested reply —\n\(reply)"
+        if let captured {
+            try AccessibilityReplacement.replaceCapturedText(captured, with: combined, selectReplacement: true)
+            setReplacement(ReplacementRecord(original: captured.text, replacement: combined, accessibilityCaptured: captured))
+        } else if let cursor = try? AccessibilityReplacement.captureAtCursor() {
+            try AccessibilityReplacement.replaceCapturedText(cursor, with: combined, selectReplacement: true)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(reply.isEmpty ? raw : reply, forType: .string)
+        lastRewriteStatus = "\\\\ ok"
+        status.show("\\\\ reply in clipboard — ⌘V to paste")
     }
 
     private func errorStatusMessage(_ error: Error, label: String) -> String {
@@ -1320,6 +1556,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             case .unsupportedProvider:
                 return "\(label) needs OpenAI, Claude, or Gemini"
             case .missingAPIKey:
+                if Settings.apiKeyIsAvailable {
+                    return "\(label) needs keychain access"
+                }
                 return "\(label) no API key — set one in the menu"
             case .apiError(let message):
                 return message
@@ -1365,7 +1604,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: brief)
             setReplacement(ReplacementRecord(original: transcript, replacement: brief, accessibilityCaptured: nil))
-            status.show("\(fallbackTrigger) voice brief done")
+            status.show("\(fallbackTrigger) done")
         } catch {
             capturedBeforeProcess = nil
             let message = voiceErrorMessage(error)
@@ -1483,6 +1722,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
         try AccessibilityReplacement.replaceCapturedText(captured, with: cleaned)
         setReplacement(ReplacementRecord(original: captured.text, replacement: cleaned, accessibilityCaptured: captured))
+        lastRewriteStatus = "\(label) ok"
+        refreshDebugMenuItems()
         status.show("\(label) done")
         return true
     }
@@ -1689,7 +1930,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         if savedStep > 0 {
             // Resuming after restart. Check if permissions are now granted.
             let accOK = AXIsProcessTrusted()
-            let hasKey = !Settings.provider.requiresAPIKey || Settings.apiKey != nil
+            let hasKey = Settings.apiKeyIsAvailable
             if hasKey && accOK {
                 step = voiceReadyForCurrentTranscriber() ? 12 : 6 // voice permissions, then test
             } else if hasKey {
@@ -1717,9 +1958,9 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     body: """
                     Performance-enhancing drugs for your typing. Inline triggers that work in any app.
 
-                    fn   Hold to talk. Release, and cleaned speech pastes at the cursor.
+                    fn   Hold to talk. Release, and what you said pastes at the cursor. Ums and ahs come out.
                     fn   Double-tap for hands-free. Tap again to stop. A quick third tap or Escape cancels.
-                    ,,   Voice brief. Talk, then pause, and get smart brevity.
+                    ,,   Same dictation, typed. Talk, then pause. It does not summarize.
                     //   Fix your text. Grammar, spelling, keeps your voice. Never starts voice.
                     >>   Ask with screen. Prompt plus full-screen context.
                     ??   Ask AI anything. Answer replaces your text.
@@ -1819,10 +2060,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let hasVoicePermissions = voiceReadyForCurrentTranscriber()
                 let usingWhisper = WhisperDictation.isConfigured
                 let body = hasVoicePermissions
-                    ? "Microphone is on. Hold fn to talk, or double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice."
+                    ? "Microphone is on. Hold fn to talk, or double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice."
                     : usingWhisper
-                        ? "Fn dictation and voice brief use your microphone and local Whisper. Audio stays on this Mac.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
-                        : "Fn dictation and voice brief use your microphone and Apple's Speech Recognition.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for a voice brief. // never starts voice.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
+                        ? "Dictation uses your microphone and local Whisper. Audio stays on this Mac.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
+                        : "Dictation uses your microphone and Apple's Speech Recognition.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
                 let r = await onboarding.show(step: .init(
                     title: hasVoicePermissions ? "Voice: on" : "Voice permissions",
                     body: body,
@@ -1853,7 +2094,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = await onboarding.show(step: .init(
                     title: voiceOK ? "Voice: on" : "Toggle voice on.",
                     body: voiceOK
-                        ? "Voice is ready. Hold fn to talk, or double-tap fn for hands-free. A third quick tap or Escape cancels. Type ,, for a voice brief. // never starts voice."
+                        ? "Voice is ready. Hold fn to talk, or double-tap fn for hands-free. A third quick tap or Escape cancels. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice."
                         : "\(missing) still needs access.\n\nTurn typeROID on in System Settings, then come back and check again.",
                     buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
                     showBack: true
@@ -2047,7 +2288,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 12. Test API (auto-send, show joke while waiting)
             case 12:
-                if selectedProvider.requiresAPIKey && Settings.apiKey(for: selectedProvider) == nil {
+                if Settings.apiKeyMissing(for: selectedProvider) {
                     step = 13; continue
                 }
                 onboarding.showLoading("injecting test substance into \(selectedProvider.displayName)...")
@@ -2083,7 +2324,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     title: screenOK ? "Screen context: on" : "Screen context",
                     body: screenOK
                         ? "Screen Recording is on. Type a prompt, then >>, and typeROID can answer with full-screen context."
-                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup, fn dictation, or ,, voice brief.\n\nmacOS requires Screen Recording permission for this.",
+                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup, fn dictation, or ,, dictation.\n\nmacOS requires Screen Recording permission for this.",
                     buttonTitles: screenOK ? ["Continue"] : ["Set Up Screen Context", "Skip"],
                     showBack: true
                 ))
