@@ -241,7 +241,16 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func pollFunctionFlag() {
-        let down = CGEventSource.flagsState(.hidSystemState).contains(.maskSecondaryFn)
+        let globeDown = CGEventSource.keyState(.hidSystemState, key: CGKeyCode(FunctionFlag.globeKeyCode))
+        let functionFlag = CGEventSource.flagsState(.hidSystemState).contains(.maskSecondaryFn)
+        let otherFunctionKeyDown = FunctionFlag.keysThatSetFunctionFlag.contains { code in
+            CGEventSource.keyState(.hidSystemState, key: CGKeyCode(code))
+        }
+        let down = FunctionFlag.pollIsFnDown(
+            globeDown: globeDown,
+            functionFlag: functionFlag,
+            otherFunctionKeyDown: otherFunctionKeyDown
+        )
         guard down != functionFlagDown else { return }
         functionFlagDown = down
         let time = ProcessInfo.processInfo.systemUptime

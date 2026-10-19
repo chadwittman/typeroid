@@ -118,6 +118,32 @@ public struct FunctionDictationGesture: Sendable {
     }
 }
 
+/// macOS sets the function modifier for more than the fn key. Arrow keys,
+/// page keys, forward delete, and the F keys all set it. Only the globe key
+/// is fn. Two arrow taps were starting hands-free because each one looked
+/// like an fn press.
+public enum FunctionFlag {
+    public static let globeKeyCode: Int64 = 0x3F
+
+    /// Key codes that set `maskSecondaryFn` while they are down.
+    public static let keysThatSetFunctionFlag: Set<Int64> = [
+        0x72, 0x73, 0x74, 0x75, 0x77, 0x79,
+        0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x67, 0x6D, 0x6F, 0x76, 0x78, 0x7A,
+        0x7B, 0x7C, 0x7D, 0x7E,
+    ]
+
+    public static func flagsChangedIsFn(keyCode: Int64) -> Bool {
+        keyCode == globeKeyCode
+    }
+
+    /// Prefer the globe key itself. The modifier bit is only a fallback, and
+    /// it does not count while some other function key is held.
+    public static func pollIsFnDown(globeDown: Bool, functionFlag: Bool, otherFunctionKeyDown: Bool) -> Bool {
+        if globeDown { return true }
+        return functionFlag && !otherFunctionKeyDown
+    }
+}
+
 /// One fn edge stream. The menu-bar app hears the key from a poll and from
 /// the event tap, and the tap callback can arrive late. A late copy of an
 /// earlier press must not count as the next tap.

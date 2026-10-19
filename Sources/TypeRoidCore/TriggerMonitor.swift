@@ -32,7 +32,6 @@ public final class TriggerMonitor {
     private(set) public var lastCharacters = ""
     private(set) public var keypressCount = 0
 
-    private static let globeKeyCode: Int64 = 0x3F
     private static let escapeKeyCode: Int64 = 0x35
 
     public init(
@@ -157,12 +156,17 @@ public final class TriggerMonitor {
         }
 
         if type == .flagsChanged {
-            noteFunction(down: event.flags.contains(.maskSecondaryFn))
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            // Arrow keys and the other function keys set this flag too.
+            // Their flagsChanged events are not the fn key.
+            if FunctionFlag.flagsChangedIsFn(keyCode: keyCode) {
+                noteFunction(down: event.flags.contains(.maskSecondaryFn))
+            }
             return Unmanaged.passUnretained(event)
         }
 
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .keyDown || type == .keyUp, keyCode == Self.globeKeyCode {
+        if type == .keyDown || type == .keyUp, keyCode == FunctionFlag.globeKeyCode {
             noteFunction(down: type == .keyDown)
             return shouldSwallowGlobe() ? nil : Unmanaged.passUnretained(event)
         }

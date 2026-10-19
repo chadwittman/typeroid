@@ -47,9 +47,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.2.27</string>
+  <string>0.2.28</string>
   <key>CFBundleVersion</key>
-  <string>37</string>
+  <string>38</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSAppleEventsUsageDescription</key>

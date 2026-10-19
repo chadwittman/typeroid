@@ -2,6 +2,17 @@ import Foundation
 import Testing
 @testable import TypeRoidCore
 
+@Test func arrowFlagIsNotTheFnKey() {
+    #expect(FunctionFlag.flagsChangedIsFn(keyCode: 0x7E) == false)
+    #expect(FunctionFlag.flagsChangedIsFn(keyCode: 0x7B) == false)
+    #expect(FunctionFlag.flagsChangedIsFn(keyCode: FunctionFlag.globeKeyCode) == true)
+
+    #expect(FunctionFlag.pollIsFnDown(globeDown: false, functionFlag: true, otherFunctionKeyDown: true) == false)
+    #expect(FunctionFlag.pollIsFnDown(globeDown: true, functionFlag: false, otherFunctionKeyDown: false) == true)
+    #expect(FunctionFlag.pollIsFnDown(globeDown: false, functionFlag: true, otherFunctionKeyDown: false) == true)
+    #expect(FunctionFlag.keysThatSetFunctionFlag.contains(0x7E))
+}
+
 @Test func functionHoldStartsPushToTalkAndReleaseEnds() {
     var gesture = FunctionDictationGesture()
 
