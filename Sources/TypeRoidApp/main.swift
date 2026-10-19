@@ -19,13 +19,21 @@ final class MenuBarStatus {
 
     func show(_ text: String, resetAfter: Double? = 2.0) {
         resetTask?.cancel()
+        resetTask = nil
         statusItem?.button?.image = nil
         statusItem?.button?.title = text
         juice.show(status: text)
 
         if let delay = resetAfter {
             resetTask = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(delay))
+                // A cancelled sleep must not fall through and clear the next
+                // status. try? would swallow that cancellation and reset anyway.
+                do {
+                    try await Task.sleep(for: .seconds(delay))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
                 self.reset()
             }
         }
@@ -102,6 +110,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var cancelMenuItem: NSMenuItem?
     private var capturedBeforeProcess: AccessibilityCapturedText?
     private var fnGesture = FunctionDictationGesture()
+    private var fnSignals = FunctionKeySignals()
     private var fnHoldTask: Task<Void, Never>?
     private var fnArmTask: Task<Void, Never>?
     private var fnSession: FnDictationSession?
@@ -127,6 +136,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
         juiceBar.start()
         startFunctionFlagPoll()
+        GlobeKeyClaim.claim()
 
         // Enable Cmd+Q
         let mainMenu = NSMenu()
@@ -143,7 +153,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let appPath = Bundle.main.bundlePath
         let inApplications = appPath.hasPrefix("/Applications") || appPath.hasPrefix(NSHomeDirectory() + "/Applications")
 
-        let needsSetup = !Settings.onboardingComplete || !Settings.apiKeyIsAvailable
+        let needsSetup = !Settings.onboardingComplete
         if needsSetup {
             NSApp.setActivationPolicy(.regular)
             Task { @MainActor in
@@ -223,7 +233,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     /// flag still changes, so poll it. The gesture ignores a repeated edge.
     private func startFunctionFlagPoll() {
         guard functionFlagTimer == nil else { return }
-        let timer = Timer(timeInterval: 0.02, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.pollFunctionFlag() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -235,9 +245,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         guard down != functionFlagDown else { return }
         functionFlagDown = down
         let time = ProcessInfo.processInfo.systemUptime
-        fputs("typeroid fn \(down ? "down" : "up")\n", stderr)
-        fflush(stderr)
-        handleFunctionKey(down ? .down(time) : .up(time))
+        ingestFunction(down: down, at: time)
+    }
+
+    /// Poll and the event tap both report fn. Keep one edge, and drop a copy
+    /// that arrives after a newer edge.
+    private func ingestFunction(down: Bool, at time: TimeInterval) {
+        guard let edge = fnSignals.edge(down: down, at: time) else { return }
+        handleFunctionKey(edge)
     }
 
     private func startMonitor() {
@@ -253,12 +268,34 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             voiceTriggerProvider: { Settings.voiceTrigger },
             screenTriggerProvider: { Settings.screenTrigger },
             onFunctionKey: { [weak self] edge in
-                Task { @MainActor in self?.handleFunctionKey(edge) }
+                Task { @MainActor in
+                    guard let self else { return }
+                    switch edge {
+                    case .down(let time):
+                        self.ingestFunction(down: true, at: time)
+                    case .up(let time):
+                        self.ingestFunction(down: false, at: time)
+                    case .otherKey(let time):
+                        guard !self.fnSignals.isStale(time) else { return }
+                        self.handleFunctionKey(edge)
+                    case .escape:
+                        self.handleFunctionKey(edge)
+                    }
+                }
             },
             shouldSwallowGlobe: { [weak self] in self?.isEnabled ?? false },
             shouldSwallowEscape: { [weak self] in self?.fnSession != nil },
             onDebugEvent: { [weak self] event in Task { @MainActor in self?.handleDebugEvent(event) } }
-        ) { [weak self] mode in Task { @MainActor in self?.handleTrigger(mode: mode) } }
+        ) { [weak self] match in
+            Task { @MainActor in
+                self?.handleTrigger(
+                    mode: match.mode,
+                    typedBefore: match.textBefore,
+                    typedDeleteCount: match.deleteCount,
+                    typedBufferTruncated: match.bufferTruncated
+                )
+            }
+        }
         triggerMonitor?.start()
         // Say it once. Repeating this every retry pinned the bar on ALLOW FN
         // and covered LISTENING while fn was already being seen.
@@ -586,8 +623,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             fnSession = nil
             fnGesture.reset()
             syncFunctionTimers()
+            GlobeKeyClaim.release()
+        } else {
+            GlobeKeyClaim.claim()
         }
         setStatusIcon()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        GlobeKeyClaim.release()
     }
     @objc private func toggleOpenMenuAfterRewrite(_ sender: NSMenuItem) {
         Settings.openMenuAfterRewrite.toggle(); sender.state = Settings.openMenuAfterRewrite ? .on : .off
@@ -903,8 +947,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         i wanted to circle back and touch base re the synergy we discussed re q4
 
         Fn dictation: hold fn, speak, release. Ums and ahs come out. The rest of what you said pastes at the cursor.
-        Double-tap fn for hands-free, then tap fn again to stop.
-        A third tap within half a second cancels. Escape cancels. A single short tap does not record.
+        Double-tap fn for hands-free. The next fn press stops and pastes.
+        Escape cancels. A single short tap does not record.
 
         Voice: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
         typeROID transcribes locally, drops ums and ahs, and pastes what you said. It does not summarize.
@@ -956,6 +1000,22 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         Mike: i can call in the testers but i need budget sign-off first
         Sarah: @you what do you think we should do here
         --- end thread ---
+
+        ─────────────────────────────────────────
+        >> — Ask with the screen. Prompt plus a full-screen shot.
+        ─────────────────────────────────────────
+
+        Place cursor after the prompt, type >>
+
+        what is this error
+
+        ─────────────────────────────────────────
+        || — Rephrase. Rewrite the line like a person said it.
+        ─────────────────────────────────────────
+
+        Place cursor after the text, type ||
+
+        Please do not hesitate to reach out should you require anything further
 
         ─────────────────────────────────────────
         Undo the last rewrite: typeROID menu > Undo
@@ -1043,7 +1103,14 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 fnSession?.handsFree = true
                 status.show("fn on. tap fn to stop", resetAfter: nil)
             case .end:
+                let recording = fnSession?.didStartRecording == true
                 fnSession?.control.stop()
+                // The next press stops hands-free even when the mic is not
+                // open yet. Leave the bar on "fn on" only while audio is
+                // actually in flight, so that stop can still paste it.
+                if !recording {
+                    status.show("No speech was detected.")
+                }
             case .discard:
                 fnSession?.control.cancel()
                 status.reset()
@@ -1080,7 +1147,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 guard !Task.isCancelled else { return }
                 self.applyFunctionActions(self.fnGesture.secondTapWindowElapsed(at: fireAt))
             }
-        case .idle, .pushToTalk, .handsFree:
+        case .idle, .pushToTalk, .handsFree, .handsFreeHeld:
             break
         }
     }
@@ -1113,7 +1180,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     self.activeTask = nil
                     self.cancelMenuItem?.isEnabled = false
                     switch self.fnGesture.phase {
-                    case .pushToTalk, .handsFree:
+                    case .pushToTalk, .handsFree, .handsFreeHeld:
                         self.fnGesture.reset()
                         self.syncFunctionTimers()
                     default:
@@ -1132,14 +1199,26 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             do {
                 guard await self.voiceReadyForFnDictation() else {
+                    if session.control.isStopRequested || session.control.isCancelRequested {
+                        if !session.didStartRecording { self.status.show("No speech was detected.") }
+                        return
+                    }
                     session.control.cancel()
                     self.fnGesture.reset()
                     self.syncFunctionTimers()
                     self.status.show("fn needs microphone access")
                     return
                 }
-                if session.control.isCancelRequested { return }
+                if session.control.isStopRequested || session.control.isCancelRequested {
+                    if session.control.isCancelRequested {
+                        self.status.reset()
+                    } else if !session.didStartRecording {
+                        self.status.show("No speech was detected.")
+                    }
+                    return
+                }
 
+                session.didStartRecording = true
                 let transcript = try await self.transcribeVoice(
                     trigger: "fn",
                     control: session.control,
@@ -1247,7 +1326,12 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         lastTypingAppName = app.localizedName; lastTypingBundleID = app.bundleIdentifier
     }
 
-    private func handleTrigger(mode: CleanMode) {
+    private func handleTrigger(
+        mode: CleanMode,
+        typedBefore: String = "",
+        typedDeleteCount: Int = 0,
+        typedBufferTruncated: Bool = false
+    ) {
         guard isEnabled else { return }
         if fnSession != nil {
             status.show("fn listening...")
@@ -1345,6 +1429,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     return
                 }
                 if mode == .clean, try await handleCleanOrVoiceMode(trigger: trigger) { return }
+                if mode == .clean, try await fixFromTypedBuffer(
+                    typedBefore: typedBefore,
+                    deleteCount: typedDeleteCount,
+                    truncated: typedBufferTruncated,
+                    trigger: trigger,
+                    label: label
+                ) { return }
 
                 let fullCapture = false
                 if try await handleWithAccessibility(trigger: trigger, mode: mode, fullCapture: fullCapture) { return }
@@ -1573,6 +1664,35 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             return clipboardError.localizedDescription
         }
         return "\(label) failed"
+    }
+
+    /// Used when the field does not expose the `//` that was just typed.
+    /// Backspace only the characters the monitor saw, then paste the fix.
+    private func fixFromTypedBuffer(
+        typedBefore: String,
+        deleteCount: Int,
+        truncated: Bool,
+        trigger: String,
+        label: String
+    ) async throws -> Bool {
+        let text = typedBefore.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !truncated, !text.isEmpty, deleteCount >= trigger.count, deleteCount <= 2000 else { return false }
+
+        status.show("\(label) fixing...", resetAfter: nil)
+        let cleaned = try await TextCleaner.process(text, mode: .clean)
+        let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        let replacement = trimmed.isEmpty || trimmed == text ? text : trimmed
+        let output = AccessibilityReplacement.allowsInlinePlaceholder()
+            ? replacement
+            : AccessibilityReplacement.terminalReplacement(replacement)
+        ClipboardReplacement.deleteCharactersBeforeCursorAndPaste(deleteCount, text: output)
+        if replacement == text {
+            status.show("looks good")
+        } else {
+            setReplacement(ReplacementRecord(original: text, replacement: output, accessibilityCaptured: nil))
+            status.show("\(label) done")
+        }
+        return true
     }
 
     private func handleCleanOrVoiceMode(trigger: String) async throws -> Bool {
@@ -1909,19 +2029,53 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private func runOnboarding() {
         Task { @MainActor in
             do {
-                await runOnboardingAsync()
+                try await runOnboardingAsync()
+            } catch is OnboardingClosed {
+                finishOnboarding(markComplete: true)
             } catch {
                 // If onboarding crashes, mark complete and move on
-                Settings.onboardingComplete = true
-                Settings.onboardingStep = 0
-                onboarding.close()
-                startMonitorWithRetry()
-                buildMenu()
+                finishOnboarding(markComplete: true)
             }
         }
     }
 
-    private func runOnboardingAsync() async {
+    private func finishOnboarding(markComplete: Bool) {
+        onboarding.close()
+        if markComplete {
+            Settings.onboardingComplete = true
+            Settings.onboardingStep = 0
+        }
+        NSApp.setActivationPolicy(.accessory)
+        startMonitorWithRetry()
+        buildMenu()
+    }
+
+    private func present(step: OnboardingWindow.Step) async throws -> Int {
+        let result = await onboarding.show(step: step)
+        if result == OnboardingWindow.closeResult { throw OnboardingClosed() }
+        return result
+    }
+
+    private func presentDemo() async throws -> Int {
+        let result = await onboarding.showDemo()
+        if result == OnboardingWindow.closeResult { throw OnboardingClosed() }
+        return result
+    }
+
+    private func inputMonitoringGranted() -> Bool {
+        let probe = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+            callback: { _, _, event, _ in Unmanaged.passRetained(event) },
+            userInfo: nil
+        )
+        if let probe { CFMachPortInvalidate(probe) }
+        return probe != nil
+    }
+
+    private func runOnboardingAsync() async throws {
         NSApp.activate(ignoringOtherApps: true)
 
         // Smart resume: check what's already done and skip ahead
@@ -1944,6 +2098,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             step = 1
         }
         var selectedProvider: AIProvider = Settings.provider
+        var finishedCycle = false
 
         while step > 0 {
             // Save progress at every step
@@ -1953,34 +2108,27 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 1. Welcome
             case 1:
-                let r = await onboarding.show(step: .init(
-                    title: "Type like a goblin. Send like a grown-up.",
+                let r = try await present(step: .init(
+                    title: "Hold fn. It types what you said.",
                     body: """
-                    Performance-enhancing drugs for your typing. Inline triggers that work in any app.
+                    One check per step. Each one has a single job.
 
-                    fn   Hold to talk. Release, and what you said pastes at the cursor. Ums and ahs come out.
-                    fn   Double-tap for hands-free. Tap again to stop. A quick third tap or Escape cancels.
-                    ,,   Same dictation, typed. Talk, then pause. It does not summarize.
-                    //   Fix your text. Grammar, spelling, keeps your voice. Never starts voice.
-                    >>   Ask with screen. Prompt plus full-screen context.
-                    ??   Ask AI anything. Answer replaces your text.
-                    ;;   Translate to another language.
-                    ==   Math and conversions. Just the answer.
-                    \\\\   Summarize a thread and draft a reply.
-                    ||   Paste canned text, rewrite it like a human.
+                    Hold fn, talk, release. What you said pastes. Ums come out. The words stay yours. Double-tap fn for hands-free. The next fn press stops and pastes.
 
-                    Open source. No telemetry. No database. No account.
+                    The typed stack waits until the permissions are real.
                     """,
-                    buttonTitles: ["Set it up", "Later"]
+                    buttonTitles: ["Set it up", "Later"],
+                    kicker: "01  Welcome"
                 ))
                 if r != 0 { step = 0 } else { step = 2 }
 
             // 2. Accessibility permission
             case 2:
-                let r = await onboarding.show(step: .init(
-                    title: "Accessibility",
-                    body: "typeROID needs this to read and replace text in your apps.\n\nClick below. Find typeROID in the list. Toggle it on.",
+                let r = try await present(step: .init(
+                    title: "Let typeROID touch the text.",
+                    body: "This step turns on Accessibility.\n\nOpen Settings. Find typeROID. Toggle it on. The next screen checks that it stuck.",
                     buttonTitles: ["Open Accessibility Settings", "Skip"],
+                    kicker: "02  Accessibility",
                     showBack: true
                 ))
                 if r == OnboardingWindow.backResult { step = 1; continue }
@@ -1993,12 +2141,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             // 3. Confirm accessibility
             case 3:
                 let permGranted = AXIsProcessTrusted()
-                let r3 = await onboarding.show(step: .init(
-                    title: permGranted ? "Accessibility: on" : "Toggle it on.",
+                let r3 = try await present(step: .init(
+                    title: permGranted ? "Accessibility is on." : "The toggle is still off.",
                     body: permGranted
-                        ? "Accessibility is on. You're good."
-                        : "Toggle typeROID on in System Settings, then come back.\n\nIf you don't see it, quit and reopen the app first.",
+                        ? "typeROID can read and replace text. Next check is the keyboard."
+                        : "Flip typeROID on in System Settings, then check again.\n\nIf it is missing from the list, quit and reopen the app, then come back to this step.",
                     buttonTitles: permGranted ? ["Continue"] : ["Check again", "Continue anyway"],
+                    kicker: "03  Accessibility check",
                     showBack: true
                 ))
                 if r3 == OnboardingWindow.backResult { step = 2; continue }
@@ -2007,52 +2156,43 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 4. Input Monitoring
             case 4:
-                // Poke CGEventTapCreate so macOS auto-adds typeROID to the Input Monitoring
-                // list (with toggle off). Without this, the app only appears after the user
-                // manually adds it via the + button — which is confusing.
-                let probeTap = CGEvent.tapCreate(
-                    tap: .cghidEventTap,
-                    place: .headInsertEventTap,
-                    options: .defaultTap,
-                    eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
-                    callback: { _, _, event, _ in Unmanaged.passRetained(event) },
-                    userInfo: nil
-                )
-                if let probeTap { CFMachPortInvalidate(probeTap) }
-
-                let inputMonitoringBody: String
-                if probeTap != nil {
-                    // Permission already granted — tap succeeded
-                    inputMonitoringBody = "typeROID already has Input Monitoring access. You're good.\n\nIf triggers aren't working after setup, check System Settings → Privacy & Security → Input Monitoring and make sure the toggle is on."
-                } else {
-                    // Tap failed — app should now be in the list, toggle just needs flipping
-                    inputMonitoringBody = "typeROID needs this to detect your triggers.\n\nmacOS just added typeROID to the Input Monitoring list — you just need to turn it on.\n\nClick \"Open Input Monitoring\" below, then:\n1. Find typeROID in the list\n2. Turn the toggle on\n\nIf it's not there yet, click the + button → Applications → typeROID → Open."
-                }
-
-                let r = await onboarding.show(step: .init(
-                    title: "Input Monitoring",
-                    body: inputMonitoringBody,
-                    buttonTitles: ["Open Input Monitoring", "Skip"],
+                // The probe adds typeROID to Input Monitoring when the toggle is still off.
+                let keysLive = inputMonitoringGranted()
+                let r = try await present(step: .init(
+                    title: keysLive ? "The keyboard is already open." : "Turn on the keyboard.",
+                    body: keysLive
+                        ? "Input Monitoring is on. typeROID can hear fn and the two-character triggers. The next screen confirms it."
+                        : "This step lets typeROID hear fn and the triggers.\n\nmacOS added typeROID to Input Monitoring. Turn the toggle on.\n\nIf it is missing, click +, then Applications, then typeROID, then Open.",
+                    buttonTitles: keysLive ? ["Continue"] : ["Open Input Monitoring", "Skip"],
+                    kicker: "04  Input Monitoring",
                     showBack: true
                 ))
-                if r == OnboardingWindow.backResult { step = 2; continue }
-                if r == 0 {
+                if r == OnboardingWindow.backResult { step = 3; continue }
+                if r == 0 && !keysLive {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
                 }
                 step = 5
 
-            // 5. Confirm input monitoring + quit/reopen notice
+            // 5. Confirm the tap, and relaunch only when macOS still needs it
             case 5:
-                let r5 = await onboarding.show(step: .init(
-                    title: "You'll need to quit and reopen typeROID.",
-                    body: "macOS won't detect your triggers until you quit and reopen the app. Not a full computer restart, just typeROID.\n\nFinish setup first. We saved your spot. When you reopen, you'll pick up right here.",
-                    buttonTitles: ["Continue"],
+                let keysLive = inputMonitoringGranted()
+                let r5 = try await present(step: .init(
+                    title: keysLive ? "Keys are live." : "Quit and reopen typeROID.",
+                    body: keysLive
+                        ? "Input Monitoring is on and the tap came up. No relaunch. Next is the microphone."
+                        : "macOS applies Input Monitoring the next time typeROID launches. The Mac stays up.\n\nQuit and reopen, and setup resumes at the microphone. Continue anyway if you want to finish the other checks first. This step is saved.",
+                    buttonTitles: keysLive ? ["Continue"] : ["Quit and reopen", "Continue anyway"],
+                    kicker: "05  Relaunch check",
                     showBack: true
                 ))
                 if r5 == OnboardingWindow.backResult { step = 4; continue }
-                // Save progress so we can resume after restart
                 Settings.onboardingStep = 6
                 Settings.provider = selectedProvider
+                if r5 == 0 && !keysLive {
+                    onboarding.close()
+                    NSApp.terminate(nil)
+                    return
+                }
                 step = 6
 
             // 6. Voice permissions
@@ -2060,14 +2200,15 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let hasVoicePermissions = voiceReadyForCurrentTranscriber()
                 let usingWhisper = WhisperDictation.isConfigured
                 let body = hasVoicePermissions
-                    ? "Microphone is on. Hold fn to talk, or double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice."
+                    ? "The microphone is authorized. The next screen confirms dictation is ready."
                     : usingWhisper
-                        ? "Dictation uses your microphone and local Whisper. Audio stays on this Mac.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice.\n\nClick below and approve the Microphone prompt. If macOS has already blocked it, typeROID will open System Settings."
-                        : "Dictation uses your microphone and Apple's Speech Recognition.\n\nHold fn to talk. Double-tap fn for hands-free. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice.\n\nClick below. Approve the prompts. If macOS has already blocked either one, typeROID will open System Settings. Dictation also has to be on in Keyboard settings."
-                let r = await onboarding.show(step: .init(
-                    title: hasVoicePermissions ? "Voice: on" : "Voice permissions",
+                        ? "This step allows the microphone. Dictation uses local Whisper. Audio stays on this Mac.\n\nApprove the prompt. If macOS already blocked it, typeROID opens Settings."
+                        : "This step allows the microphone and Speech Recognition.\n\nApprove the prompts. Dictation also has to be on in Keyboard settings. If macOS already blocked one, typeROID opens Settings."
+                let r = try await present(step: .init(
+                    title: hasVoicePermissions ? "Microphone is on." : "Allow the microphone.",
                     body: body,
                     buttonTitles: hasVoicePermissions ? ["Continue"] : ["Set Up Voice", "Skip"],
+                    kicker: "06  Microphone",
                     showBack: true
                 ))
                 if r == OnboardingWindow.backResult { step = 5; continue }
@@ -2091,12 +2232,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     speechOK ? nil : "Speech Recognition",
                     dictationOK ? nil : "Keyboard Dictation"
                 ].compactMap { $0 }.joined(separator: " and ")
-                let r = await onboarding.show(step: .init(
-                    title: voiceOK ? "Voice: on" : "Toggle voice on.",
+                let r = try await present(step: .init(
+                    title: voiceOK ? "Voice is ready." : "Voice is still off.",
                     body: voiceOK
-                        ? "Voice is ready. Hold fn to talk, or double-tap fn for hands-free. A third quick tap or Escape cancels. Type ,, for the same dictation. Ums and ahs come out. It does not summarize. // never starts voice."
-                        : "\(missing) still needs access.\n\nTurn typeROID on in System Settings, then come back and check again.",
+                        ? "Hold fn, talk, release. Ums come out. Sentences start with a capital, and so does I. The words stay yours.\n\nDouble-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A short tap does not record.\n\n,, is the same dictation, typed. // never starts voice."
+                        : "\(missing) still needs a toggle.\n\nTurn typeROID on, then check again.",
                     buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
+                    kicker: "07  Voice check",
                     showBack: true
                 ))
                 if r == OnboardingWindow.backResult { step = 6; continue }
@@ -2119,18 +2261,17 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 8. Pick provider
             case 8:
-                let r = await onboarding.show(step: .init(
+                let r = try await present(step: .init(
                     title: "Pick your supplier.",
                     body: """
-                    Pick whichever AI you have an API key for.
+                    This step picks the compound for the typed stack. // ?? ;; == >> \\\\ || use it.
 
-                    OpenAI: gpt-4.1-nano (fast, cheap)
-                    Claude: haiku (premium quality)
-                    Gemini: flash (free tier available)
-                    Groq: llama 8b (free tier, instant)
-                    Ollama: local models, no key, no cloud
+                    fn and ,, do not. They transcribe on this Mac.
+
+                    OpenAI is fast and cheap. Claude is the premium dose. Gemini and Groq have free tiers. Ollama stays on the machine, no key.
                     """,
                     buttonTitles: ["OpenAI", "Claude", "Gemini", "Groq", "Ollama"],
+                    kicker: "08  Supplier",
                     showBack: true
                 ))
                 if r == OnboardingWindow.backResult { step = 7; continue }
@@ -2143,10 +2284,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 }
                 // Warn about Google API key exposure
                 if selectedProvider == .google {
-                    let gr = await onboarding.show(step: .init(
-                        title: "Quick note about Google.",
-                        body: "Google's API puts your key in the URL. Your text is always encrypted, but the key itself could be visible on public wifi or corporate VPNs with network inspection.\n\nOpenAI, Claude, and Groq keep the key fully encrypted.\n\nGoogle is fine on a trusted network.",
+                    let gr = try await present(step: .init(
+                        title: "Google puts the key in the URL.",
+                        body: "The text is encrypted. The key itself can show up on public wifi or a network that inspects traffic.\n\nOpenAI, Claude, and Groq keep the key in the header. Google is fine on a network you trust.",
                         buttonTitles: ["Use Google", "Pick another"],
+                        kicker: "08  Supplier",
                         showBack: true
                     ))
                     if gr == 1 || gr == OnboardingWindow.backResult { continue }
@@ -2169,19 +2311,21 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                             Settings.model = models[0]
                         }
                         let modelList = models.isEmpty ? "No models found yet." : "Models found:\n" + models.prefix(5).joined(separator: "\n")
-                        let ro = await onboarding.show(step: .init(
-                            title: "Ollama is running.",
-                            body: "\(modelList)\n\nNo API key needed. Everything stays on your machine.",
+                        let ro = try await present(step: .init(
+                            title: "Ollama is up.",
+                            body: "\(modelList)\n\nNo API key. The compound stays on this Mac. Next is a test dose.",
                             buttonTitles: ["Continue"],
+                            kicker: "09  Local compound",
                             showBack: true
                         ))
                         if ro == OnboardingWindow.backResult { step = 8; continue }
                         step = 12
                     } else {
-                        let ro = await onboarding.show(step: .init(
-                            title: "Ollama isn't running.",
-                            body: "typeROID can't reach Ollama at localhost:11434.\n\nMake sure Ollama is installed and running:\n  brew install ollama\n  ollama serve\n\nThen pull a model:\n  ollama pull llama3\n\nYou can continue and start it later.",
+                        let ro = try await present(step: .init(
+                            title: "Ollama is quiet.",
+                            body: "Nothing answered at localhost:11434.\n\nbrew install ollama\nollama serve\nollama pull llama3\n\nTry again once it is up, or continue and start it later.",
                             buttonTitles: ["Continue anyway", "Try again"],
+                            kicker: "09  Local compound",
                             showBack: true
                         ))
                         if ro == OnboardingWindow.backResult { step = 8; continue }
@@ -2209,16 +2353,17 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 case .ollama:
                     keyURL = ""; keyInstructions = "" // handled above
                 }
-                let r = await onboarding.show(step: .init(
-                    title: "Load your API key.",
+                let r = try await present(step: .init(
+                    title: "Load the \(selectedProvider.displayName) key.",
                     body: """
                     \(keyInstructions)
 
-                    Click "Get Key" to open \(selectedProvider.displayName)'s dashboard. Copy the key. Come back and click "Paste from Clipboard."
+                    Get Key opens the dashboard. Copy the key. Come back. Paste from Clipboard.
 
-                    Stored in macOS Keychain. Never leaves your machine.
+                    It goes into Keychain. typeROID reads it on this Mac.
                     """,
                     buttonTitles: ["Get Key", "Paste from Clipboard", "Skip"],
+                    kicker: "09  API key",
                     showBack: true
                 ))
                 if r == 0 {
@@ -2227,10 +2372,11 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     // Wait for browser to open, then bring our window back
                     try? await Task.sleep(for: .seconds(2))
                     NSApp.activate(ignoringOtherApps: true)
-                    let r2 = await onboarding.show(step: .init(
-                        title: "Got it? Paste it.",
-                        body: "Copy your \(selectedProvider.displayName) key to clipboard, then click below.",
+                    let r2 = try await present(step: .init(
+                        title: "Paste the key.",
+                        body: "Copy the \(selectedProvider.displayName) key, then paste it from the clipboard.",
                         buttonTitles: ["Paste from Clipboard", "Skip"],
+                        kicker: "09  API key",
                         showBack: true
                     ))
                     if r2 == OnboardingWindow.backResult { continue }
@@ -2259,27 +2405,31 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 // Grab clipboard NOW before any dialogs change it
                 let clipToSave = NSPasteboard.general.string(forType: .string)?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                _ = await onboarding.show(step: .init(
-                    title: "Heads up.",
-                    body: "macOS may ask you to allow Keychain access. Hit \"Always Allow\" so it doesn't ask again.",
+                _ = try await present(step: .init(
+                    title: "Allow Keychain.",
+                    body: "macOS may ask to use the key. Choose Always Allow so the next shortcut does not stop to ask.",
                     buttonTitles: ["Got it"],
+                    kicker: "10  Keychain",
                     showLogo: false
                 ))
                 Settings.setAPIKey(clipToSave, for: selectedProvider)
                 let clip = clipToSave
-                _ = await onboarding.show(step: .init(
-                    title: "Key saved.",
-                    body: "\(String(clip.prefix(8)))...\(String(clip.suffix(4)))\n\nStored securely in your Keychain.",
-                    buttonTitles: ["Continue"]
+                let mask = clip.count >= 12 ? "\(clip.prefix(4))…\(clip.suffix(4))" : "Saved."
+                _ = try await present(step: .init(
+                    title: "Key is in.",
+                    body: "\(mask)\n\nStored in Keychain for \(selectedProvider.displayName). Next is a test dose.",
+                    buttonTitles: ["Continue"],
+                    kicker: "10  Keychain"
                 ))
                 step = 12
 
             // 11. Empty clipboard
             case 11:
-                let r9 = await onboarding.show(step: .init(
-                    title: "Nothing on clipboard.",
-                    body: "Copy your API key first, then come back. Or skip and add it later from the // menu.\n\nSettings > API Key",
+                let r9 = try await present(step: .init(
+                    title: "Clipboard is empty.",
+                    body: "Copy the API key, then try again. Or skip and add it later from the menu, under API Key.",
                     buttonTitles: ["Try again", "Skip"],
+                    kicker: "11  Clipboard",
                     showBack: true
                 ))
                 if r9 == OnboardingWindow.backResult { step = 9; continue }
@@ -2295,24 +2445,28 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let sample = "yojohn saww you lookmaxxing during the meting w our client, bettr off mewing on your own time bro lmaooo"
                 do {
                     let result = try await TextCleaner.process(sample, mode: .clean)
-                    _ = await onboarding.show(step: .init(
-                        title: "Good news.",
+                    _ = try await present(step: .init(
+                        title: "The compound hit.",
                         body: """
-                        typeROID is talking with your AI platform of choice now.
+                        \(selectedProvider.displayName) answered.
 
-                        Test input:
+                        In:
                         \(sample)
 
-                        AI response:
+                        Out:
                         \(result)
                         """,
-                        buttonTitles: ["Nice"]
+                        buttonTitles: ["Nice"],
+                        kicker: "12  Test dose"
                     ))
+                } catch is OnboardingClosed {
+                    throw OnboardingClosed()
                 } catch {
-                    _ = await onboarding.show(step: .init(
-                        title: "That didn't hit.",
-                        body: "\(error.localizedDescription)\n\nYou can fix your API key later from the // menu.",
-                        buttonTitles: ["Continue"]
+                    _ = try await present(step: .init(
+                        title: "The dose missed.",
+                        body: "\(error.localizedDescription)\n\nFix the key later from the menu, under API Key.",
+                        buttonTitles: ["Continue"],
+                        kicker: "12  Test dose"
                     ))
                 }
                 step = 13
@@ -2320,12 +2474,13 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             // 13. Screen Recording
             case 13:
                 let screenOK = screenRecordingReady()
-                let r = await onboarding.show(step: .init(
-                    title: screenOK ? "Screen context: on" : "Screen context",
+                let r = try await present(step: .init(
+                    title: screenOK ? "Screen context is on." : "Screen context is optional.",
                     body: screenOK
-                        ? "Screen Recording is on. Type a prompt, then >>, and typeROID can answer with full-screen context."
-                        : "Screen context mode is optional.\n\nType a prompt, then >>, and typeROID sends your prompt plus a full-screen screenshot to your selected model. Screenshots are never used for // cleanup, fn dictation, or ,, dictation.\n\nmacOS requires Screen Recording permission for this.",
+                        ? "Type a prompt, then >>. typeROID sends the prompt and a full-screen shot. //, fn, and ,, never take a screenshot."
+                        : "This step is only for >>.\n\nType a prompt, then >>. typeROID sends that prompt plus a full-screen screenshot. //, fn, and ,, never take a screenshot.\n\nSkip if you do not want Screen Recording.",
                     buttonTitles: screenOK ? ["Continue"] : ["Set Up Screen Context", "Skip"],
+                    kicker: "13  Screen",
                     showBack: true
                 ))
                 if r == OnboardingWindow.backResult { step = 12; continue }
@@ -2337,7 +2492,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
             // 14. Final screen
             case 14:
-                _ = await onboarding.showDemo()
+                _ = try await presentDemo()
+                finishedCycle = true
                 Settings.onboardingStep = 0
                 step = 0
 
@@ -2352,14 +2508,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory) // hide from Dock now
         startMonitorWithRetry()
         buildMenu()
-        openDemoPad()
+        if finishedCycle { openDemoPad() }
 
     }
 }
 
+private struct OnboardingClosed: Error {}
+
 private final class FnDictationSession {
     let control = DictationControl()
     var handsFree: Bool
+    /// True once audio capture has been asked to start. A stop before this
+    /// has nothing to paste.
+    var didStartRecording = false
 
     init(handsFree: Bool) {
         self.handsFree = handsFree

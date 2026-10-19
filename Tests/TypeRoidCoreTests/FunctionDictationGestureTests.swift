@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TypeRoidCore
 
@@ -25,19 +26,23 @@ import Testing
     #expect(gesture.fnDown(at: 5).isEmpty)
     #expect(gesture.fnUp(at: 5.09).isEmpty)
     #expect(gesture.fnDown(at: 5.28) == [.begin(.handsFree)])
+    #expect(gesture.phase == .handsFreeHeld(startedAt: 5.28))
+    #expect(gesture.fnDown(at: 5.3).isEmpty)
     #expect(gesture.fnUp(at: 5.36).isEmpty)
     #expect(gesture.phase == .handsFree(startedAt: 5.28))
     #expect(gesture.fnDown(at: 8) == [.end])
     #expect(gesture.phase == .idle)
 }
 
-@Test func functionThirdTapInsideCancelWindowCancelsHandsFree() {
+@Test func functionNextPressAfterHandsFreeStops() {
     var gesture = FunctionDictationGesture()
 
     _ = gesture.fnDown(at: 2)
     _ = gesture.fnUp(at: 2.07)
     #expect(gesture.fnDown(at: 2.2) == [.begin(.handsFree)])
-    #expect(gesture.fnDown(at: 2.4) == [.cancel])
+    #expect(gesture.fnDown(at: 2.4).isEmpty)
+    #expect(gesture.fnUp(at: 2.45).isEmpty)
+    #expect(gesture.fnDown(at: 2.6) == [.end])
     #expect(gesture.phase == .idle)
 }
 
@@ -89,4 +94,30 @@ import Testing
     #expect(gesture.otherKey(at: 2).isEmpty)
     #expect(gesture.phase == .pushToTalk(downAt: 1))
     #expect(gesture.fnUp(at: 2.4) == [.end])
+}
+
+@Test func lateCopyOfTheFirstFnPressDoesNotCancelTheDoubleTap() {
+    var signals = FunctionKeySignals()
+    var gesture = FunctionDictationGesture()
+
+    func feed(down: Bool, at time: TimeInterval) {
+        guard let edge = signals.edge(down: down, at: time) else { return }
+        switch edge {
+        case .down(let time):
+            _ = gesture.fnDown(at: time)
+        case .up(let time):
+            _ = gesture.fnUp(at: time)
+        case .otherKey, .escape:
+            break
+        }
+    }
+
+    feed(down: true, at: 1)
+    feed(down: false, at: 1.08)
+    feed(down: true, at: 1)
+    feed(down: false, at: 1.08)
+    feed(down: true, at: 1.3)
+    #expect(gesture.phase == .handsFreeHeld(startedAt: 1.3))
+    feed(down: false, at: 1.38)
+    #expect(gesture.phase == .handsFree(startedAt: 1.3))
 }

@@ -3,20 +3,20 @@
 </p>
 
 <p align="center">
-  <strong>Type like a goblin. Send like a grown-up.</strong>
+  <strong>Hold fn. It types what you said.</strong>
 </p>
 
 <p align="center">
-  Performance-enhancing drugs for your typing. Open source. No telemetry. No account. Just you and your AI.
+  A walkie-talkie for the cursor, plus the two-character stack. Open source. No telemetry. No account.
 </p>
 
 ---
 
 ## What is typeROID?
 
-You already type like a caveman to ChatGPT and Claude. No caps, no grammar, pure brain dump. It works perfectly.
+Hold fn, talk, release. What you said pastes at the cursor. Ums come out. The words stay yours.
 
-typeROID lets you do that with humans too. Type however you want in any app, hit a trigger, and your text gets fixed in place. No copy-paste. No switching apps. Just type and go.
+Double-tap fn for hands-free. The next fn press stops and pastes. Then type two characters when you want a tool: fix, math, ask, translate, screen, summarize, or rephrase.
 
 ## Triggers
 
@@ -34,7 +34,7 @@ typeROID lets you do that with humans too. Type however you want in any app, hit
 
 ## Fn dictation
 
-Hold fn and speak. Release, and what you said pastes at the cursor. Ums, uhs, and ahs come out. Sentences start with a capital, and the word I is capitalized. Nothing else is rewritten, and it does not summarize. Double-tap fn for hands-free, then tap fn again to stop and paste. A third tap within half a second cancels. Escape cancels. A single short tap does not record.
+Hold fn and speak. Release, and what you said pastes at the cursor. Ums, uhs, and ahs come out. Sentences start with a capital, and the word I is capitalized. Nothing else is rewritten, and it does not summarize. Double-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A single short tap does not record.
 
 `,,` is the same dictation with a typed trigger. `//` never starts voice.
 

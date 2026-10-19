@@ -54,6 +54,24 @@ import Testing
     #expect(plan.replaceRange == selection)
 }
 
+@Test func accessibilityReplacementPlanUsesTheSlashAtTheCursor() throws {
+    let value = "fix this sentence //\nsee https://example.com later"
+    let cursor = value.range(of: " //")!.upperBound
+
+    let plan = try AccessibilityReplacement.replacementPlan(in: value, trigger: "//", cursor: cursor)
+
+    #expect(plan.text == "fix this sentence")
+}
+
+@Test func accessibilityReplacementPlanIgnoresAUrlAtTheCursor() {
+    let value = "https://example.com"
+    let cursor = value.range(of: "//")!.upperBound
+
+    #expect(throws: AccessibilityReplacementError.triggerNotFound) {
+        try AccessibilityReplacement.replacementPlan(in: value, trigger: "//", cursor: cursor)
+    }
+}
+
 @Test func terminalReplacementKeepsThePasteOnOneLine() {
     let pasted = AccessibilityReplacement.terminalReplacement("Hello\r\nworld\nagain\r")
     #expect(pasted == "Hello world again ")

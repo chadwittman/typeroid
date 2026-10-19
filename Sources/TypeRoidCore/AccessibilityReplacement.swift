@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-public enum AccessibilityReplacementError: LocalizedError, Sendable {
+public enum AccessibilityReplacementError: LocalizedError, Sendable, Equatable {
     case missingFocusedElement
     case unsupportedElement
     case secureTextField
@@ -103,7 +103,12 @@ public enum AccessibilityReplacement {
             throw AccessibilityReplacementError.unsupportedElement
         }
 
-        let plan = try replacementPlan(in: value, trigger: trigger, fullCapture: fullCapture)
+        let plan = try replacementPlan(
+            in: value,
+            trigger: trigger,
+            cursor: cursorIndex(in: value, element: element),
+            fullCapture: fullCapture
+        )
 
         return AccessibilityCapturedText(
             text: plan.text,
@@ -265,7 +270,7 @@ public enum AccessibilityReplacement {
     }
 
     /// Newlines in a paste are commands. Keep the replacement on one line.
-    static func terminalReplacement(_ replacement: String) -> String {
+    public static func terminalReplacement(_ replacement: String) -> String {
         replacement
             .replacingOccurrences(of: "\r\n", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
@@ -411,10 +416,13 @@ public enum AccessibilityReplacement {
         return value.startIndex..<end
     }
 
-    static func replacementPlan(in value: String, trigger: String, fullCapture: Bool = false) throws -> AccessibilityReplacementPlan {
-        guard let triggerRange = value.range(of: trigger, options: .backwards) else {
-            throw AccessibilityReplacementError.triggerNotFound
-        }
+    static func replacementPlan(
+        in value: String,
+        trigger: String,
+        cursor: String.Index? = nil,
+        fullCapture: Bool = false
+    ) throws -> AccessibilityReplacementPlan {
+        let triggerRange = try locateTrigger(in: value, trigger: trigger, cursor: cursor)
 
         // Don't fire // inside URL schemes (http://, https://, ftp://, etc.)
         // The character immediately before // would be ':' in any URL scheme.
@@ -452,6 +460,41 @@ public enum AccessibilityReplacement {
             text: message,
             replaceRange: adjustedStart..<triggerRange.upperBound
         )
+    }
+
+    /// The trigger that ends at the cursor. A later `//` in the field, including
+    /// one inside a URL, is not the trigger the user just typed.
+    static func locateTrigger(in value: String, trigger: String, cursor: String.Index?) throws -> Range<String.Index> {
+        if let cursor {
+            let clamped = cursor <= value.endIndex ? cursor : value.endIndex
+            let head = value[..<clamped]
+            guard head.hasSuffix(trigger) else {
+                throw AccessibilityReplacementError.triggerNotFound
+            }
+            let start = head.index(head.endIndex, offsetBy: -trigger.count)
+            return start..<head.endIndex
+        }
+        guard let found = value.range(of: trigger, options: .backwards) else {
+            throw AccessibilityReplacementError.triggerNotFound
+        }
+        return found
+    }
+
+    private static func cursorIndex(in value: String, element: AXUIElement) -> String.Index {
+        var rangeObject: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeObject) == .success,
+              let rangeObject,
+              CFGetTypeID(rangeObject) == AXValueGetTypeID()
+        else {
+            return value.endIndex
+        }
+        let axRange = rangeObject as! AXValue
+        var cfRange = CFRange(location: 0, length: 0)
+        guard AXValueGetValue(axRange, .cfRange, &cfRange) else {
+            return value.endIndex
+        }
+        let location = min(max(0, cfRange.location), value.count)
+        return value.index(value.startIndex, offsetBy: location)
     }
 
     /// The paragraph at the cursor, or the current selection. Used when a tool

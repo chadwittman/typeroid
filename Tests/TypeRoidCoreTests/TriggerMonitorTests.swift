@@ -6,7 +6,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("http://")
@@ -19,7 +19,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("https://")
@@ -32,7 +32,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("//")
@@ -45,7 +45,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("first line\n//")
@@ -58,7 +58,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters(" //")
@@ -72,7 +72,7 @@ import Testing
         triggerProvider: { "//" },
         voiceTriggerProvider: { ",," },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters(",,")
@@ -86,7 +86,7 @@ import Testing
         triggerProvider: { "//" },
         voiceTriggerProvider: { ",," },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("do not voice ,,")
@@ -100,7 +100,7 @@ import Testing
         triggerProvider: { "//" },
         screenTriggerProvider: { ">>" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("what is this error >>")
@@ -114,7 +114,7 @@ import Testing
         triggerProvider: { "//" },
         screenTriggerProvider: { ">>" },
         customCommandsProvider: { [">>"] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("look here >>")
@@ -127,7 +127,7 @@ import Testing
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("clean this //")
@@ -135,12 +135,34 @@ import Testing
     #expect(modes == [.clean])
 }
 
+@Test func triggerMonitorKeepsTheTypedTextBeforeCleanTrigger() {
+    var matches: [TypedTrigger] = []
+    let monitor = TriggerMonitor(
+        triggerProvider: { "//" },
+        customCommandsProvider: { [] },
+        onTrigger: { matches.append($0) }
+    )
+
+    monitor.handleTypedCharacters("fix this sentence //")
+
+    #expect(matches.count == 1)
+    #expect(matches[0].mode == .clean)
+    #expect(matches[0].textBefore == "fix this sentence")
+    #expect(matches[0].deleteCount == "fix this sentence //".count)
+    #expect(!matches[0].bufferTruncated)
+}
+
+@Test func slashKeyCodeIsTheCleanTriggerCharacter() {
+    #expect(TriggerMonitor.characterForKeyCode(0x2C, shifted: false) == "/")
+    #expect(TriggerMonitor.characterForKeyCode(0x2C, shifted: true) == "?")
+}
+
 @Test func triggerMonitorCanFireCleanTriggerAfterUrlText() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
         customCommandsProvider: { [] },
-        onTrigger: { modes.append($0) }
+        onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters("https://example.com clean this //")

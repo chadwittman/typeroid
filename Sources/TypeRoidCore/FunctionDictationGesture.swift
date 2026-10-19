@@ -18,18 +18,19 @@ public enum FunctionDictationAction: Sendable, Equatable {
 ///
 /// Hold fn to talk, then release to stop. A press shorter than `tapCeiling`
 /// is a tap. Two taps inside `doubleTapGap` turn hands-free on. The next fn
-/// press stops hands-free, and a third tap inside `cancelWindow` cancels.
+/// press, after that second tap is released, stops hands-free and pastes.
 public struct FunctionDictationGesture: Sendable {
     public var holdStart: TimeInterval = 0.22
     public var tapCeiling: TimeInterval = 0.45
     public var doubleTapGap: TimeInterval = 0.45
-    public var cancelWindow: TimeInterval = 0.50
 
     public enum Phase: Equatable, Sendable {
         case idle
         case pressed(at: TimeInterval)
         case pushToTalk(downAt: TimeInterval)
         case armingDoubleTap(upAt: TimeInterval, recording: Bool)
+        /// The second tap is still down. Another down is the same press, not a stop.
+        case handsFreeHeld(startedAt: TimeInterval)
         case handsFree(startedAt: TimeInterval)
     }
 
@@ -47,12 +48,12 @@ public struct FunctionDictationGesture: Sendable {
             phase = .pressed(at: time)
             return []
         case .armingDoubleTap(_, let recording):
-            phase = .handsFree(startedAt: time)
+            phase = .handsFreeHeld(startedAt: time)
             return recording ? [.promoteToHandsFree] : [.begin(.handsFree)]
-        case .handsFree(let startedAt):
+        case .handsFree:
             phase = .idle
-            return time - startedAt < cancelWindow ? [.cancel] : [.end]
-        case .pressed, .pushToTalk:
+            return [.end]
+        case .pressed, .pushToTalk, .handsFreeHeld:
             return []
         }
     }
@@ -73,6 +74,9 @@ public struct FunctionDictationGesture: Sendable {
             }
             phase = .idle
             return [.end]
+        case .handsFreeHeld(let startedAt):
+            phase = .handsFree(startedAt: startedAt)
+            return []
         case .idle, .armingDoubleTap, .handsFree:
             return []
         }
@@ -91,6 +95,9 @@ public struct FunctionDictationGesture: Sendable {
         case .armingDoubleTap(_, let recording):
             phase = .idle
             return recording ? [.discard] : []
+        case .handsFreeHeld:
+            phase = .idle
+            return [.discard]
         case .idle, .handsFree:
             return []
         }
@@ -108,5 +115,29 @@ public struct FunctionDictationGesture: Sendable {
         guard time - upAt + 0.02 >= doubleTapGap else { return [] }
         phase = .idle
         return recording ? [.discard, .hintHold] : [.hintHold]
+    }
+}
+
+/// One fn edge stream. The menu-bar app hears the key from a poll and from
+/// the event tap, and the tap callback can arrive late. A late copy of an
+/// earlier press must not count as the next tap.
+public struct FunctionKeySignals: Sendable {
+    private var down = false
+    private var lastTime: TimeInterval = -.greatestFiniteMagnitude
+
+    public init() {}
+
+    public mutating func edge(down next: Bool, at time: TimeInterval) -> FunctionKeyEdge? {
+        guard time > lastTime || (time == lastTime && next == down) else { return nil }
+        if time > lastTime {
+            lastTime = time
+        }
+        guard next != down else { return nil }
+        down = next
+        return next ? .down(time) : .up(time)
+    }
+
+    public func isStale(_ time: TimeInterval) -> Bool {
+        time < lastTime
     }
 }

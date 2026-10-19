@@ -2,8 +2,13 @@ import AppKit
 import Carbon
 import Foundation
 
+private struct TapOwner: @unchecked Sendable {
+    let raw: UnsafeMutableRawPointer
+    init(_ raw: UnsafeMutableRawPointer) { self.raw = raw }
+}
+
 public final class TriggerMonitor {
-    private let onTrigger: (CleanMode) -> Void
+    private let onTrigger: (TypedTrigger) -> Void
     private let triggerProvider: () -> String           // //
     private let contextTriggerProvider: () -> String    // \\ (clipboard context)
     private let queryTriggerProvider: () -> String      // ?? (ask AI)
@@ -19,7 +24,10 @@ public final class TriggerMonitor {
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var tapThread: Thread?
+    private var tapRunLoop: CFRunLoop?
     private var recentCharacters = ""
+    private var bufferTruncated = false
     private var functionIsDown = false
     private(set) public var isActive = false
     private(set) public var lastCharacters = ""
@@ -42,7 +50,7 @@ public final class TriggerMonitor {
         shouldSwallowGlobe: @escaping () -> Bool = { false },
         shouldSwallowEscape: @escaping () -> Bool = { false },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
-        onTrigger: @escaping (CleanMode) -> Void
+        onTrigger: @escaping (TypedTrigger) -> Void
     ) {
         self.triggerProvider = triggerProvider
         self.contextTriggerProvider = contextTriggerProvider
@@ -61,6 +69,29 @@ public final class TriggerMonitor {
     }
 
     public func start() {
+        guard tapThread == nil else { return }
+        // The tap used to live on the main run loop. The onboarding shader and
+        // the juice-bar timer stall that loop long enough for macOS to disable
+        // the tap, and a later tapEnable does not bring the keys back. A
+        // dedicated thread keeps // and fn listening while the UI is busy.
+        let owner = TapOwner(Unmanaged.passUnretained(self).toOpaque())
+        let ready = DispatchSemaphore(value: 0)
+        let thread = Thread {
+            let monitor = Unmanaged<TriggerMonitor>.fromOpaque(owner.raw).takeUnretainedValue()
+            monitor.installTap()
+            ready.signal()
+            if monitor.isActive {
+                CFRunLoopRun()
+            }
+        }
+        thread.name = "typeroid-keys"
+        tapThread = thread
+        thread.start()
+        _ = ready.wait(timeout: .now() + 2)
+    }
+
+    private func installTap() {
+        tapRunLoop = CFRunLoopGetCurrent()
         let keyDown = 1 << CGEventType.keyDown.rawValue
         let keyUp = 1 << CGEventType.keyUp.rawValue
         let flagsChanged = 1 << CGEventType.flagsChanged.rawValue
@@ -102,7 +133,7 @@ public final class TriggerMonitor {
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         if let runLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         }
         CGEvent.tapEnable(tap: eventTap, enable: true)
         isActive = true
@@ -110,8 +141,8 @@ public final class TriggerMonitor {
     }
 
     deinit {
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        if let tapRunLoop {
+            CFRunLoopStop(tapRunLoop)
         }
         if let eventTap {
             CGEvent.tapEnable(tap: eventTap, enable: false)
@@ -169,13 +200,38 @@ public final class TriggerMonitor {
             return
         }
 
+        let string = Self.typedString(from: event)
+        guard !string.isEmpty else { return }
+        handleTypedCharacters(string)
+    }
+
+    /// The tap sometimes delivers a key code and an empty unicode string.
+    /// The two-character tools are punctuation, so recover those from the code.
+    static func characterForKeyCode(_ keyCode: Int64, shifted: Bool) -> String? {
+        switch keyCode {
+        case 0x2C: return shifted ? "?" : "/"
+        case 0x18: return shifted ? "+" : "="
+        case 0x2B: return shifted ? "<" : ","
+        case 0x29: return shifted ? ":" : ";"
+        case 0x2A: return shifted ? "|" : "\\"
+        case 0x2F: return shifted ? ">" : "."
+        default: return nil
+        }
+    }
+
+    private static func typedString(from event: CGEvent) -> String {
         var length = 0
         var chars = [UniChar](repeating: 0, count: 8)
         event.keyboardGetUnicodeString(maxStringLength: chars.count, actualStringLength: &length, unicodeString: &chars)
-        guard length > 0 else { return }
-
-        let string = String(utf16CodeUnits: chars, count: length)
-        handleTypedCharacters(string)
+        if length > 0 {
+            return String(utf16CodeUnits: chars, count: length)
+        }
+        let flags = event.flags
+        if flags.contains(.maskAlternate) || flags.contains(.maskCommand) || flags.contains(.maskControl) {
+            return ""
+        }
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        return characterForKeyCode(keyCode, shifted: flags.contains(.maskShift)) ?? ""
     }
 
     func handleTypedCharacters(_ string: String) {
@@ -194,9 +250,13 @@ public final class TriggerMonitor {
         for character in string {
             if character.isNewline {
                 recentCharacters.removeAll()
+                bufferTruncated = false
             } else {
                 recentCharacters.append(character)
-                recentCharacters = String(recentCharacters.suffix(maxLen))
+                if recentCharacters.count > maxLen {
+                    bufferTruncated = true
+                    recentCharacters = String(recentCharacters.suffix(maxLen))
+                }
             }
         }
         keypressCount += 1
@@ -206,87 +266,80 @@ public final class TriggerMonitor {
         // Check screen trigger (>>) before custom commands so the built-in
         // visual context workflow is reserved.
         if recentCharacters.hasSuffix(screenTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedScreen)
-            onTrigger(.screen)
+            fire(.screen, trigger: screenTrigger, debug: .triggerMatchedScreen)
             return
         }
 
         // Check custom commands - filename IS the trigger, longest first
         for cmd in customCommands.sorted(by: { $0.count > $1.count }) {
             if recentCharacters.hasSuffix(cmd) {
-                recentCharacters.removeAll()
-                lastCharacters = ""
-                onDebugEvent(.triggerMatchedContext)
-                onTrigger(.custom(cmd))
+                fire(.custom(cmd), trigger: cmd, debug: .triggerMatchedContext)
                 return
             }
         }
 
         // Check rephrase trigger (||)
         if recentCharacters.hasSuffix(rephraseTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatched)
-            onTrigger(.rephrase)
+            fire(.rephrase, trigger: rephraseTrigger, debug: .triggerMatched)
             return
         }
 
         // Check math trigger (==)
         if recentCharacters.hasSuffix(mathTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedTranslate)  // reuse event for now
-            onTrigger(.math)
+            fire(.math, trigger: mathTrigger, debug: .triggerMatchedTranslate)
             return
         }
 
         // Check translate trigger (;;)
         if recentCharacters.hasSuffix(translateTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedTranslate)
-            onTrigger(.translate)
+            fire(.translate, trigger: translateTrigger, debug: .triggerMatchedTranslate)
             return
         }
 
         // Check context trigger (\\) - read screen
         if recentCharacters.hasSuffix(contextTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedContext)
-            onTrigger(.context)
+            fire(.context, trigger: contextTrigger, debug: .triggerMatchedContext)
             return
         }
 
         // Check query trigger (??) - ask AI
         if recentCharacters.hasSuffix(queryTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedRewrite)
-            onTrigger(.query)
+            fire(.query, trigger: queryTrigger, debug: .triggerMatchedRewrite)
             return
         }
 
         // Check voice-only trigger (,,). This intentionally fires anywhere so
         // app composers with stale/inaccessible line state can still start voice.
         if recentCharacters.hasSuffix(voiceTrigger) {
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatchedVoice)
-            onTrigger(.smartBrevity)
+            fire(.smartBrevity, trigger: voiceTrigger, debug: .triggerMatchedVoice)
             return
         }
 
         // Check clean trigger (//)
         if recentCharacters.hasSuffix(cleanTrigger) {
             guard shouldFireCleanTrigger(cleanTrigger) else { return }
-            recentCharacters.removeAll()
-            lastCharacters = ""
-            onDebugEvent(.triggerMatched)
-            onTrigger(.clean)
+            fire(.clean, trigger: cleanTrigger, debug: .triggerMatched)
         }
+    }
+
+    private func fire(_ mode: CleanMode, trigger: String, debug: TriggerMonitorDebugEvent) {
+        let before: String
+        if recentCharacters.hasSuffix(trigger) {
+            before = String(recentCharacters.dropLast(trigger.count))
+        } else {
+            before = recentCharacters
+        }
+        let match = TypedTrigger(
+            mode: mode,
+            textBefore: before.trimmingCharacters(in: .whitespacesAndNewlines),
+            deleteCount: recentCharacters.count,
+            bufferTruncated: bufferTruncated
+        )
+        recentCharacters.removeAll()
+        lastCharacters = ""
+        bufferTruncated = false
+        onDebugEvent(debug)
+        onTrigger(match)
     }
 
     private func shouldFireCleanTrigger(_ trigger: String) -> Bool {
@@ -299,6 +352,15 @@ public final class TriggerMonitor {
         let flags = event.flags
         return flags.contains(.maskCommand) || flags.contains(.maskControl)
     }
+}
+
+public struct TypedTrigger: Sendable, Equatable {
+    public let mode: CleanMode
+    public let textBefore: String
+    /// Characters just typed, including the trigger. Safe to backspace when
+    /// the buffer was not truncated.
+    public let deleteCount: Int
+    public let bufferTruncated: Bool
 }
 
 public enum FunctionKeyEdge: Sendable {

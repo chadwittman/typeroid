@@ -9,199 +9,221 @@ final class OnboardingWindow {
     private var continuation: CheckedContinuation<Int, Never>?
     private var buttons: [NSButton] = []
     private var logoView: AnimatedLogoView?
+    private var bodyLabel: NSTextField?
+    private let closeProxy = OnboardingCloseProxy()
     var mockThreadText: String = ""
 
     struct Step {
         let title: String
         let body: String
         let buttonTitles: [String]
+        var kicker: String? = nil
         var showLogo: Bool = true
         var showBack: Bool = false
         var showTestField: Bool = false
     }
 
     static let backResult = -1
+    static let closeResult = -2
+    static let acid = NSColor(srgbRed: 191.0 / 255.0, green: 1, blue: 0, alpha: 1)
+
+    private let windowSize = NSSize(width: 560, height: 600)
 
     func show(step: Step) async -> Int {
-        let w: NSWindow
-        if let existing = window {
-            w = existing
-        } else {
-            w = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 480),
-                styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
-                backing: .buffered, defer: false
-            )
-            w.titlebarAppearsTransparent = true
-            w.titleVisibility = .hidden
-            w.isMovableByWindowBackground = true
-            w.backgroundColor = NSColor(red: 0.04, green: 0.04, blue: 0.06, alpha: 1)
-            w.level = .normal  // let user interact with other windows
-            w.center()
-            window = w
+        let w = prepareWindow()
 
-            let shader = LiquidShaderView(frame: NSRect(x: 0, y: 0, width: 560, height: 480))
-            w.contentView?.addSubview(shader)
-            shader.autoresizingMask = [.width, .height]
-            shaderView = shader
-            shader.startRendering()
-        }
-
-        // Clear old content
         contentView?.removeFromSuperview()
         logoView?.stopAnimating()
         logoView = nil
         buttons.removeAll()
+        bodyLabel = nil
 
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 480))
+        let width = windowSize.width
+        let height = windowSize.height
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         container.autoresizingMask = [.width, .height]
 
-        var yOffset: CGFloat = 0
+        let margin: CGFloat = 40
+        let contentWidth = width - margin * 2
+        var cursor = height - 28
 
-        // Animated // logo at top
         if step.showLogo {
-            let logo = AnimatedLogoView(frame: NSRect(x: 40, y: 400, width: 480, height: 50))
+            let logo = AnimatedLogoView(frame: NSRect(x: margin, y: cursor - 50, width: contentWidth, height: 50))
             container.addSubview(logo)
             logo.startAnimating()
             logoView = logo
-            yOffset = 60
+            cursor -= 62
         }
 
-        // Title
-        let titleLabel = NSTextField(labelWithString: step.title)
-        titleLabel.font = .systemFont(ofSize: 22, weight: .heavy)
+        if let kicker = step.kicker {
+            let kickerLabel = NSTextField(labelWithString: kicker.uppercased())
+            kickerLabel.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+            kickerLabel.textColor = Self.acid
+            kickerLabel.frame = NSRect(x: margin, y: cursor - 16, width: contentWidth, height: 16)
+            kickerLabel.drawsBackground = false
+            kickerLabel.isBezeled = false
+            container.addSubview(kickerLabel)
+            cursor -= 24
+        }
+
+        let titleFont = NSFont.systemFont(ofSize: 24, weight: .heavy)
+        let titleHeight = min(78, textHeight(step.title, font: titleFont, width: contentWidth) + 4)
+        let titleLabel = NSTextField(wrappingLabelWithString: step.title)
+        titleLabel.font = titleFont
         titleLabel.textColor = .white
         titleLabel.maximumNumberOfLines = 2
-        titleLabel.preferredMaxLayoutWidth = 480
-        titleLabel.frame = NSRect(x: 40, y: 400 - yOffset, width: 480, height: 50)
+        titleLabel.preferredMaxLayoutWidth = contentWidth
+        titleLabel.frame = NSRect(x: margin, y: cursor - titleHeight, width: contentWidth, height: titleHeight)
         titleLabel.drawsBackground = false
         titleLabel.isBezeled = false
         container.addSubview(titleLabel)
+        cursor -= titleHeight + 12
 
-        // Fade in title
-        titleLabel.alphaValue = 0
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.4
-        titleLabel.animator().alphaValue = 1
-        NSAnimationContext.endGrouping()
+        let buttonTop: CGFloat = 72
+        let testReserve: CGFloat = step.showTestField ? 64 : 0
+        let bodyBottom = buttonTop + testReserve
+        let bodyHeight = max(80, cursor - bodyBottom)
+        let bodyFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let measuredBody = textHeight(step.body, font: bodyFont, width: contentWidth - 4) + 8
 
-        // Body
-        let bodyLabel = NSTextField(wrappingLabelWithString: step.body)
-        bodyLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        bodyLabel.textColor = NSColor.white.withAlphaComponent(0.7)
-        bodyLabel.maximumNumberOfLines = 0
-        bodyLabel.preferredMaxLayoutWidth = 480
-        bodyLabel.frame = NSRect(x: 40, y: 75, width: 480, height: 310 - yOffset)
-        bodyLabel.alignment = .left
-        bodyLabel.drawsBackground = false
-        bodyLabel.isBezeled = false
-        container.addSubview(bodyLabel)
+        let scroll = NSScrollView(frame: NSRect(x: margin, y: bodyBottom, width: contentWidth, height: bodyHeight))
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = measuredBody > bodyHeight + 1
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
 
-        // Fade in body
-        bodyLabel.alphaValue = 0
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = 0.5
-        bodyLabel.animator().alphaValue = 1
-        NSAnimationContext.endGrouping()
+        let doc = TopAlignedDocument(frame: NSRect(x: 0, y: 0, width: contentWidth, height: max(measuredBody, bodyHeight)))
+        let body = NSTextField(wrappingLabelWithString: step.body)
+        body.font = bodyFont
+        body.textColor = NSColor.white.withAlphaComponent(0.78)
+        body.maximumNumberOfLines = 0
+        body.preferredMaxLayoutWidth = contentWidth - 4
+        body.frame = NSRect(x: 0, y: 0, width: contentWidth - 4, height: measuredBody)
+        body.isSelectable = true
+        body.drawsBackground = false
+        body.isBezeled = false
+        doc.addSubview(body)
+        scroll.documentView = doc
+        container.addSubview(scroll)
+        bodyLabel = body
 
-        // Buttons row - shrink sizing for many buttons and keep clear of Back.
-        let manyButtons = step.buttonTitles.count > 3
-        let buttonStartX: CGFloat = manyButtons ? 30 : 40
-        let buttonAreaWidth: CGFloat = step.showBack ? 410 : 480
-        let buttonSpacing: CGFloat = manyButtons ? 6 : 12
-        let maxButtonWidth = (buttonAreaWidth - (buttonSpacing * CGFloat(max(step.buttonTitles.count - 1, 0)))) / CGFloat(max(step.buttonTitles.count, 1))
-        var buttonX = buttonStartX
-        for (i, title) in step.buttonTitles.enumerated() {
-            let btn = NSButton(title: title, target: self, action: #selector(buttonClicked(_:)))
-            btn.tag = i
-            btn.font = .monospacedSystemFont(ofSize: manyButtons ? 11 : 12, weight: i == 0 ? .bold : .regular)
-            btn.sizeToFit()
-            let naturalWidth = max(btn.frame.width + 16, manyButtons ? 86 : 130)
-            let btnWidth = manyButtons ? min(naturalWidth, maxButtonWidth) : naturalWidth
-            btn.frame = NSRect(x: buttonX, y: 28, width: btnWidth, height: 34)
-            btn.bezelStyle = .rounded
-
-            if i == 0 {
-                btn.keyEquivalent = "\r"
-                btn.contentTintColor = .white
-            }
-
-            // Fade in buttons
-            btn.alphaValue = 0
-            container.addSubview(btn)
-            buttons.append(btn)
-            buttonX += btnWidth + buttonSpacing
-
-            let delay = 0.3 + Double(i) * 0.1
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0.3
-                btn.animator().alphaValue = 1
-                NSAnimationContext.endGrouping()
-            }
-        }
-
-        // Test field (for the final "try it" step)
         if step.showTestField {
-            let testLabel = NSTextField(labelWithString: "Try it out. Type messy text below and hit //")
-            testLabel.font = .systemFont(ofSize: 10, weight: .medium)
-            testLabel.textColor = NSColor(red: 0.75, green: 1.0, blue: 0.0, alpha: 0.7)
-            testLabel.frame = NSRect(x: 40, y: 92, width: 480, height: 14)
+            let testLabel = NSTextField(labelWithString: "Type a messy line, then //")
+            testLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+            testLabel.textColor = Self.acid.withAlphaComponent(0.8)
+            testLabel.frame = NSRect(x: margin, y: buttonTop + 28, width: contentWidth, height: 16)
             testLabel.drawsBackground = false
             testLabel.isBezeled = false
             container.addSubview(testLabel)
 
-            let testField = NSTextField(frame: NSRect(x: 40, y: 68, width: 400, height: 22))
-            testField.placeholderString = "type somethign messy here then hit //"
-            testField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            let testField = NSTextField(frame: NSRect(x: margin, y: buttonTop, width: contentWidth, height: 24))
+            testField.placeholderString = "heyy can we move the mtg"
+            testField.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             testField.isEditable = true
             testField.isSelectable = true
             testField.usesSingleLineMode = true
             testField.drawsBackground = true
             testField.backgroundColor = NSColor.black.withAlphaComponent(0.5)
-            testField.textColor = NSColor(red: 0.75, green: 1.0, blue: 0.0, alpha: 1)
+            testField.textColor = Self.acid
             testField.isBezeled = true
             testField.bezelStyle = .roundedBezel
             container.addSubview(testField)
         }
 
-        // Back button (left side, subtle)
-        if step.showBack {
-            let backBtn = NSButton(title: "Back", target: self, action: #selector(backClicked))
-            backBtn.font = .systemFont(ofSize: 11, weight: .regular)
-            backBtn.isBordered = false
-            backBtn.contentTintColor = NSColor.white.withAlphaComponent(0.4)
-            backBtn.sizeToFit()
-            backBtn.frame = NSRect(x: 460, y: 28, width: 60, height: 28)
-            backBtn.alphaValue = 0
-            container.addSubview(backBtn)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        let manyButtons = step.buttonTitles.count > 3
+        let buttonSpacing: CGFloat = manyButtons ? 8 : 12
+        let rowWidth = contentWidth
+        let maxButtonWidth = (rowWidth - (buttonSpacing * CGFloat(max(step.buttonTitles.count - 1, 0)))) / CGFloat(max(step.buttonTitles.count, 1))
+        var buttonX = margin
+        for (i, title) in step.buttonTitles.enumerated() {
+            let btn = NSButton(title: title, target: self, action: #selector(buttonClicked(_:)))
+            btn.tag = i
+            btn.bezelStyle = .rounded
+            btn.font = .monospacedSystemFont(ofSize: manyButtons ? 11 : 13, weight: i == 0 ? .bold : .medium)
+            btn.sizeToFit()
+            let naturalWidth = btn.frame.width + (manyButtons ? 12 : 22)
+            let btnWidth = manyButtons ? maxButtonWidth : max(naturalWidth, 120)
+            btn.frame = NSRect(x: buttonX, y: 28, width: btnWidth, height: 34)
+            if i == 0 {
+                btn.keyEquivalent = "\r"
+                btn.bezelColor = Self.acid
+                btn.contentTintColor = .black
+            } else {
+                btn.contentTintColor = .white
+            }
+            btn.alphaValue = 0
+            container.addSubview(btn)
+            buttons.append(btn)
+            buttonX += btnWidth + buttonSpacing
+
+            let delay = 0.15 + Double(i) * 0.06
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 NSAnimationContext.beginGrouping()
-                NSAnimationContext.current.duration = 0.3
-                backBtn.animator().alphaValue = 1
+                NSAnimationContext.current.duration = 0.25
+                btn.animator().alphaValue = 1
                 NSAnimationContext.endGrouping()
             }
         }
 
-        // Subtle "typeroid" watermark bottom right
-        let watermark = NSTextField(labelWithString: "typeROID")
-        watermark.font = .monospacedSystemFont(ofSize: 9, weight: .medium)
-        watermark.textColor = NSColor.white.withAlphaComponent(0.15)
-        watermark.frame = NSRect(x: 460, y: 6, width: 90, height: 14)
-        watermark.alignment = .right
-        watermark.drawsBackground = false
-        watermark.isBezeled = false
-        container.addSubview(watermark)
+        if step.showBack {
+            let backBtn = NSButton(title: "Back", target: self, action: #selector(backClicked))
+            backBtn.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
+            backBtn.isBordered = false
+            backBtn.contentTintColor = NSColor.white.withAlphaComponent(0.55)
+            backBtn.sizeToFit()
+            backBtn.frame = NSRect(x: width - margin - backBtn.frame.width, y: 6, width: backBtn.frame.width + 4, height: 18)
+            container.addSubview(backBtn)
+        }
 
         w.contentView?.addSubview(container)
         contentView = container
-
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
         return await withCheckedContinuation { cont in
             self.continuation = cont
         }
+    }
+
+    private func prepareWindow() -> NSWindow {
+        if let existing = window { return existing }
+        let w = NSWindow(
+            contentRect: NSRect(origin: .zero, size: windowSize),
+            styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        w.titlebarAppearsTransparent = true
+        w.titleVisibility = .hidden
+        w.isMovableByWindowBackground = true
+        w.backgroundColor = NSColor(srgbRed: 0.04, green: 0.04, blue: 0.05, alpha: 1)
+        w.appearance = NSAppearance(named: .darkAqua)
+        w.level = .normal
+        closeProxy.onClose = { [weak self] in
+            guard let self, let continuation = self.continuation else { return }
+            self.continuation = nil
+            continuation.resume(returning: Self.closeResult)
+        }
+        w.delegate = closeProxy
+        w.center()
+        window = w
+
+        let shader = LiquidShaderView(frame: NSRect(origin: .zero, size: windowSize))
+        w.contentView?.addSubview(shader)
+        shader.autoresizingMask = [.width, .height]
+        shaderView = shader
+        shader.startRendering()
+        return w
+    }
+
+    private func textHeight(_ string: String, font: NSFont, width: CGFloat) -> CGFloat {
+        let box = (string as NSString).boundingRect(
+            with: NSSize(width: width, height: 4000),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font]
+        )
+        return ceil(box.height)
     }
 
     @objc private func buttonClicked(_ sender: NSButton) {
@@ -222,16 +244,7 @@ final class OnboardingWindow {
     }
 
     func showLoading(_ text: String = "working on it...") {
-        if let container = contentView {
-            for subview in container.subviews {
-                if let label = subview as? NSTextField,
-                   label.frame.height > 100,
-                   !label.isEditable {
-                    label.stringValue = text
-                    break
-                }
-            }
-        }
+        bodyLabel?.stringValue = text
     }
 
     func showDemo() async -> Int {
@@ -239,24 +252,26 @@ final class OnboardingWindow {
         self.mockThreadText = mockThread
 
         return await show(step: .init(
-            title: "typeROID is fully injected.",
+            title: "You're on cycle.",
             body: """
-            The enhancement is permanent. You're in the enhanced league now.
+            The menu bar is home. A practice file opens next.
 
-            Open any app and try:
+            Hold fn, talk, release. Ums come out. The words stay yours.
+            Double-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A short tap does not record.
 
-            //   heyy john cn u movee the mtg//
-            ??   whats 3pm EST in london??
-            ;;   good morning how are you;;
-            ==   15% of 340==
-            \\\\   copy a thread first, then type \\\\
+            ,,   same dictation. Talk, then pause.
+            //   fix a draft. Never starts voice.
+            >>   prompt plus the screen.
+            ??   ask.
+            ;;   translate.
+            ==   math.
+            \\\\   summarize a copied thread.
+            ||   rephrase.
 
-            Custom commands: drop a .txt in ~/.typeroid/commands/
-            The filename is your trigger.
-
-            typeROID lives in your menu bar. Look for //
+            Put the cursor at the end of a line in the practice file. Type the trigger.
             """,
-            buttonTitles: ["Let's go"]
+            buttonTitles: ["Open the practice file"],
+            kicker: "14  On cycle"
         ))
     }
 
@@ -423,11 +438,27 @@ final class OnboardingWindow {
     func close() {
         logoView?.stopAnimating()
         shaderView?.stopRendering()
+        window?.delegate = nil
         window?.orderOut(nil)
         window = nil
         shaderView = nil
         logoView = nil
+        bodyLabel = nil
     }
+}
+
+@MainActor
+private final class OnboardingCloseProxy: NSObject, NSWindowDelegate {
+    var onClose: (() -> Void)?
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        onClose?()
+        return true
+    }
+}
+
+private final class TopAlignedDocument: NSView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - Real Logo View (uses the actual typeROID logo asset)
