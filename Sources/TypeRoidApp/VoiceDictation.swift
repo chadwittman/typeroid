@@ -64,6 +64,9 @@ final class VoiceDictation: @unchecked Sendable {
             if Self.containsVoice(buffer) {
                 self.lastVoiceTime = Date()
             }
+            for level in Self.waveLevels(buffer) {
+                MicWave.shared.push(linear: level)
+            }
             self.recognitionRequest?.append(buffer)
         }
 
@@ -201,6 +204,29 @@ final class VoiceDictation: @unchecked Sendable {
         }
         let rms = sqrt(sum / Float(frameLength))
         return rms > 0.015
+    }
+
+    /// A few peaks from one buffer, so the pill wave has a shape inside each chunk.
+    private static func waveLevels(_ buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let channel = buffer.floatChannelData?[0] else { return [] }
+        let frames = Int(buffer.frameLength)
+        guard frames > 0 else { return [] }
+        let buckets = 3
+        let size = max(1, frames / buckets)
+        var levels: [Float] = []
+        levels.reserveCapacity(buckets)
+        for bucket in 0..<buckets {
+            let start = bucket * size
+            let end = min(frames, start + size)
+            var peak: Float = 0
+            var index = start
+            while index < end {
+                peak = max(peak, abs(channel[index]))
+                index += 4
+            }
+            levels.append(peak)
+        }
+        return levels
     }
 }
 

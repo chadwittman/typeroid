@@ -15,7 +15,6 @@ public final class TriggerMonitor {
     private let translateTriggerProvider: () -> String  // ;; (translate)
     private let mathTriggerProvider: () -> String       // == (math)
     private let rephraseTriggerProvider: () -> String   // || (rephrase/de-corp)
-    private let voiceTriggerProvider: () -> String      // ,, (voice brief)
     private let screenTriggerProvider: () -> String     // >> (prompt with screenshot)
     private let customCommandsProvider: () -> [String]  // available ..commands
     private let onFunctionKey: (FunctionKeyEdge) -> Void
@@ -43,7 +42,6 @@ public final class TriggerMonitor {
         translateTriggerProvider: @escaping () -> String = { Settings.translateTrigger },
         mathTriggerProvider: @escaping () -> String = { Settings.mathTrigger },
         rephraseTriggerProvider: @escaping () -> String = { Settings.rephraseTrigger },
-        voiceTriggerProvider: @escaping () -> String = { Settings.voiceTrigger },
         screenTriggerProvider: @escaping () -> String = { Settings.screenTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onFunctionKey: @escaping (FunctionKeyEdge) -> Void = { _ in },
@@ -58,7 +56,6 @@ public final class TriggerMonitor {
         self.translateTriggerProvider = translateTriggerProvider
         self.mathTriggerProvider = mathTriggerProvider
         self.rephraseTriggerProvider = rephraseTriggerProvider
-        self.voiceTriggerProvider = voiceTriggerProvider
         self.screenTriggerProvider = screenTriggerProvider
         self.customCommandsProvider = customCommandsProvider
         self.onFunctionKey = onFunctionKey
@@ -241,11 +238,10 @@ public final class TriggerMonitor {
         let translateTrigger = translateTriggerProvider() // ;;
         let mathTrigger = mathTriggerProvider()           // ==
         let rephraseTrigger = rephraseTriggerProvider()   // ||
-        let voiceTrigger = voiceTriggerProvider()         // ,,
         let screenTrigger = screenTriggerProvider()       // >>
         let customCommands = customCommandsProvider()
         let maxCustomLen = (customCommands.map { $0.count }.max() ?? 0) + 2  // +2 for ".."
-        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, voiceTrigger.count, screenTrigger.count, maxCustomLen, 1) + 256
+        let maxLen = max(cleanTrigger.count, contextTrigger.count, queryTrigger.count, translateTrigger.count, mathTrigger.count, rephraseTrigger.count, screenTrigger.count, maxCustomLen, 1) + 256
 
         for character in string {
             if character.isNewline {
@@ -305,13 +301,6 @@ public final class TriggerMonitor {
         // Check query trigger (??) - ask AI
         if recentCharacters.hasSuffix(queryTrigger) {
             fire(.query, trigger: queryTrigger, debug: .triggerMatchedRewrite)
-            return
-        }
-
-        // Check voice-only trigger (,,). This intentionally fires anywhere so
-        // app composers with stale/inaccessible line state can still start voice.
-        if recentCharacters.hasSuffix(voiceTrigger) {
-            fire(.smartBrevity, trigger: voiceTrigger, debug: .triggerMatchedVoice)
             return
         }
 

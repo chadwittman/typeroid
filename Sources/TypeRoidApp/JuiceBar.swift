@@ -2,6 +2,51 @@ import AppKit
 import CoreText
 import TypeRoidCore
 
+/// Recent microphone levels for the dock pill. The audio thread pushes.
+/// The pill reads a copy while it draws. Silence stays a flat line.
+final class MicWave: @unchecked Sendable {
+    static let shared = MicWave()
+
+    private let lock = NSLock()
+    private var levels: [Float] = []
+    private var active = false
+    private let capacity = 42
+
+    func begin() {
+        lock.lock()
+        if !active {
+            levels.removeAll(keepingCapacity: true)
+            active = true
+        }
+        lock.unlock()
+    }
+
+    func end() {
+        lock.lock()
+        active = false
+        levels.removeAll(keepingCapacity: true)
+        lock.unlock()
+    }
+
+    func push(linear: Float) {
+        guard linear.isFinite else { return }
+        let sample = min(1, max(0, linear))
+        lock.lock()
+        defer { lock.unlock() }
+        guard active else { return }
+        if levels.count >= capacity {
+            levels.removeFirst(levels.count - capacity + 1)
+        }
+        levels.append(sample)
+    }
+
+    func snapshot() -> [Float] {
+        lock.lock()
+        defer { lock.unlock() }
+        return levels
+    }
+}
+
 enum JuicePick: Equatable {
     case talk
     case fix
@@ -11,6 +56,7 @@ enum JuicePick: Equatable {
     case rephrase
     case screen
     case thread
+    case quit
 }
 
 /// A small capsule just above the Dock.
@@ -73,11 +119,19 @@ final class JuiceBar {
     func show(status: String) {
         start()
         closeTray()
-        setCue(JuiceCue.from(status: status))
+        let cue = JuiceCue.from(status: status)
+        switch cue {
+        case .juicing, .openSet:
+            MicWave.shared.begin()
+        default:
+            MicWave.shared.end()
+        }
+        setCue(cue)
     }
 
     func rest() {
         start()
+        MicWave.shared.end()
         setCue(benched ? .benched : .rest)
     }
 
@@ -107,11 +161,10 @@ final class JuiceBar {
     }
 
     private func clicked(at point: CGPoint, in bounds: CGRect) {
-        if cue == .juicing || cue == .openSet || cue == .cooking {
+        if cue == .juicing || cue == .openSet || cue.isCooking {
             onStop?()
             return
         }
-        guard !benched else { return }
         let capsule = bounds.insetBy(dx: 3, dy: 4)
         let layout = JuiceLayout.layout(in: capsule, open: trayOpen)
         if trayOpen, let pick = layout.pick(at: point) {
@@ -166,13 +219,15 @@ private final class JuicePanel: NSPanel {
 }
 
 private struct JuiceLayout {
-    static let trayWidth: CGFloat = 204
+    static let trayWidth: CGFloat = 236
 
     var lozenge: CGRect
     var marks: [(JuicePick, String, CGRect)]
+    var close: CGRect?
 
     func pick(at point: CGPoint) -> JuicePick? {
-        marks.first { $0.2.contains(point) }?.0
+        if let close, close.insetBy(dx: -6, dy: -8).contains(point) { return .quit }
+        return marks.first { $0.2.contains(point) }?.0
     }
 
     static func layout(in capsule: CGRect, open: Bool) -> JuiceLayout {
@@ -186,11 +241,19 @@ private struct JuiceLayout {
                     width: width,
                     height: height
                 ),
-                marks: []
+                marks: [],
+                close: nil
             )
         }
 
         let lozenge = CGRect(x: capsule.minX + 8, y: capsule.midY - 3.5, width: 15, height: 7)
+        let button: CGFloat = 16
+        let close = CGRect(
+            x: capsule.maxX - 5 - button,
+            y: capsule.midY - button / 2,
+            width: button,
+            height: button
+        )
         let marks: [(JuicePick, String)] = [
             (.talk, "fn"),
             (.fix, "//"),
@@ -202,7 +265,7 @@ private struct JuiceLayout {
             (.thread, "\\\\"),
         ]
         let start = lozenge.maxX + 6
-        let end = capsule.maxX - 4
+        let end = close.minX - 10
         let slot = max(12, (end - start) / CGFloat(marks.count))
         let rects = marks.enumerated().map { index, mark in
             (
@@ -216,7 +279,7 @@ private struct JuiceLayout {
                 )
             )
         }
-        return JuiceLayout(lozenge: lozenge, marks: rects)
+        return JuiceLayout(lozenge: lozenge, marks: rects, close: close)
     }
 }
 
@@ -235,7 +298,16 @@ private extension JuiceCue {
         NSColor(srgbRed: 191.0 / 255.0, green: 1, blue: 0, alpha: 1)
     }
 
-    var lively: Bool { self == .juicing || self == .openSet || self == .cooking }
+    var lively: Bool {
+        switch self {
+        case .juicing, .openSet, .cooking: true
+        default: false
+        }
+    }
+
+    var isCooking: Bool {
+        if case .cooking = self { true } else { false }
+    }
 }
 
 @MainActor
@@ -305,8 +377,10 @@ private final class JuicePill: NSView {
     private func drawMark(in capsule: NSRect, context: CGContext) {
         let layout = JuiceLayout.layout(in: capsule, open: trayOpen && !cue.lively)
         switch cue {
-        case .juicing, .openSet, .cooking:
-            drawDissolved(in: capsule, context: context)
+        case .juicing, .openSet:
+            drawWave(in: capsule, context: context)
+        case .cooking(let zap):
+            drawZap(zap, in: capsule, context: context)
         case .gains:
             drawReformed(in: capsule, context: context)
         case .rest, .benched, .access, .hint, .spit:
@@ -314,6 +388,9 @@ private final class JuicePill: NSView {
             if trayOpen {
                 for mark in layout.marks {
                     drawGlyph(mark.1, in: mark.2, context: context)
+                }
+                if let close = layout.close {
+                    drawClose(close, context: context)
                 }
             }
         }
@@ -362,45 +439,250 @@ private final class JuicePill: NSView {
         context.restoreGState()
     }
 
-    private func drawDissolved(in capsule: NSRect, context: CGContext) {
-        let melt: CGFloat = arrivedDissolved ? 1 : CGFloat(min(1, sinceMood / 0.4))
+    /// A white disc with a dark cross, set apart from the acid tool marks.
+    private func drawClose(_ rect: CGRect, context: CGContext) {
+        context.setFillColor(NSColor.white.withAlphaComponent(0.94).cgColor)
+        context.fillEllipse(in: rect)
+        let inset: CGFloat = 4.6
+        let ink = NSColor.black.withAlphaComponent(0.88)
+        strokeLine(
+            from: CGPoint(x: rect.minX + inset, y: rect.minY + inset),
+            to: CGPoint(x: rect.maxX - inset, y: rect.maxY - inset),
+            width: 1.8,
+            color: ink,
+            context: context
+        )
+        strokeLine(
+            from: CGPoint(x: rect.minX + inset, y: rect.maxY - inset),
+            to: CGPoint(x: rect.maxX - inset, y: rect.minY + inset),
+            width: 1.8,
+            color: ink,
+            context: context
+        )
+    }
+
+    /// Real mic levels, newest on the right. Silence is a flat line.
+    private func drawWave(in capsule: NSRect, context: CGContext) {
+        let melt: CGFloat = arrivedDissolved ? 1 : CGFloat(min(1, sinceMood / 0.28))
         if melt < 1 {
-            let width = 15 + 18 * melt
-            let height = 7 * (1 - melt) + 2 * melt
+            let width = 15 * (1 - melt) + 4 * melt
+            let height = 7 * (1 - melt) + 1.5 * melt
             let rect = CGRect(
                 x: capsule.midX - width / 2,
                 y: capsule.midY - height / 2,
                 width: width,
                 height: height
             )
-            fillRounded(rect, radius: height / 2, color: cue.acid.withAlphaComponent(0.75 * (1 - melt)), context: context)
+            fillRounded(rect, radius: height / 2, color: cue.acid.withAlphaComponent(0.8 * (1 - melt)), context: context)
         }
 
-        let count = 9
-        let barWidth: CGFloat = 2
-        let gap: CGFloat = 2.2
-        let cluster = CGFloat(count) * (barWidth + gap) - gap
-        let origin = capsule.midX - cluster / 2
-        let maxH = capsule.height - 8
-        let lateIndex = count - 2
-        for index in 0..<count {
-            let height = dissolvedHeight(index: index, lateIndex: lateIndex, maxH: maxH)
-            let x = origin + CGFloat(index) * (barWidth + gap)
-            let rect = CGRect(x: x, y: capsule.midY - height / 2, width: barWidth, height: height)
-            fillRounded(rect, radius: 1, color: cue.acid.withAlphaComponent(0.88 * melt), context: context)
+        let samples = MicWave.shared.snapshot()
+        let inset = capsule.insetBy(dx: 10, dy: 5)
+        let mid = inset.midY
+        let color = cue.acid.withAlphaComponent(0.95 * melt)
+        strokeLine(
+            from: CGPoint(x: inset.minX, y: mid),
+            to: CGPoint(x: inset.maxX, y: mid),
+            width: 1,
+            color: color.withAlphaComponent(0.35 * melt),
+            context: context
+        )
+        guard samples.count > 1 else { return }
+
+        let step = inset.width / 41
+        let origin = inset.maxX - CGFloat(samples.count - 1) * step
+        func amplitude(_ sample: Float) -> CGFloat {
+            let lifted = pow(Double(min(1, sample * 4.4)), 0.6)
+            return CGFloat(lifted) * (inset.height / 2)
+        }
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: inset.minX, y: mid))
+        path.addLine(to: CGPoint(x: origin, y: mid))
+        for index in samples.indices {
+            let x = origin + CGFloat(index) * step
+            path.addLine(to: CGPoint(x: x, y: mid + amplitude(samples[index])))
+        }
+        for index in samples.indices.reversed() {
+            let x = origin + CGFloat(index) * step
+            path.addLine(to: CGPoint(x: x, y: mid - amplitude(samples[index])))
+        }
+        path.addLine(to: CGPoint(x: origin, y: mid))
+        path.closeSubpath()
+        context.addPath(path)
+        context.setFillColor(color.cgColor)
+        context.fillPath()
+    }
+
+    private func drawZap(_ zap: JuiceZap, in capsule: NSRect, context: CGContext) {
+        let acid = cue.acid
+        switch zap {
+        case .voice:
+            drawBolt(in: capsule, context: context, jagged: true, color: acid)
+        case .fix:
+            drawSlashes(in: capsule, context: context, leaning: 1, pair: true, color: acid)
+        case .math:
+            drawEqualsCharge(in: capsule, context: context, color: acid)
+        case .ask:
+            drawAskSpark(in: capsule, context: context, color: acid)
+        case .translate:
+            drawSwap(in: capsule, context: context, color: acid)
+        case .rephrase:
+            drawRicochet(in: capsule, context: context, color: acid)
+        case .screen:
+            drawChevron(in: capsule, context: context, color: acid)
+        case .thread:
+            drawSlashes(in: capsule, context: context, leaning: -1, pair: false, color: acid)
+        case .charge:
+            drawBolt(in: capsule, context: context, jagged: false, color: acid)
         }
     }
 
-    private func dissolvedHeight(index: Int, lateIndex: Int, maxH: CGFloat) -> CGFloat {
-        if cue == .cooking {
-            let catchup = max(0, 1 - sinceMood / 0.9)
-            if index == lateIndex { return min(maxH, 3 + 4.5 * catchup) }
-            return 2.6
+    private func cycle(_ period: Double) -> CGFloat {
+        guard period > 0 else { return 0 }
+        return CGFloat(sinceMood.truncatingRemainder(dividingBy: period) / period)
+    }
+
+    private func drawBolt(in capsule: NSRect, context: CGContext, jagged: Bool, color: NSColor) {
+        let t = cycle(0.44)
+        let strike = min(1, t / 0.34)
+        let fade = t < 0.34 ? 1 : max(0, 1 - (t - 0.34) / 0.12)
+        let left = capsule.minX + 9
+        let right = capsule.maxX - 9
+        let headX = left + (right - left) * strike
+        let tailX = max(left, headX - 26)
+        let mid = capsule.midY
+        let generation = floor(sinceMood / 0.44)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: tailX, y: mid))
+        let segments = 4
+        for index in 1...segments {
+            let x = tailX + (headX - tailX) * CGFloat(index) / CGFloat(segments)
+            let jag: CGFloat = jagged && index < segments
+                ? CGFloat(sin(generation * 1.7 + Double(index) * 2.1)) * 3.4
+                : 0
+            path.addLine(to: CGPoint(x: x, y: mid + jag))
         }
-        var clock = phase
-        if index == lateIndex { clock -= cue == .openSet ? 0.9 : 0.5 }
-        let snap = pow(abs(sin(clock * 1.15 + Double(index) * 0.5)), 0.75)
-        return min(maxH, 2.4 + (maxH - 2.4) * snap * 0.72)
+        strokePath(path, width: 1.6, color: color.withAlphaComponent(fade), context: context)
+        fillDot(x: headX, y: mid, radius: 2.1, color: color.withAlphaComponent(fade), context: context)
+    }
+
+    private func drawSlashes(in capsule: NSRect, context: CGContext, leaning: CGFloat, pair: Bool, color: NSColor) {
+        let t = cycle(0.52)
+        let travel = min(1, t / 0.42)
+        let fade = t < 0.42 ? 1 : max(0, 1 - (t - 0.42) / 0.1)
+        let left = capsule.minX + 12
+        let right = capsule.maxX - 18
+        let x = left + (right - left) * travel
+        slash(at: x, lean: leaning, alpha: fade, color: color, in: capsule, context: context)
+        if pair {
+            slash(at: x + 7, lean: leaning, alpha: fade, color: color, in: capsule, context: context)
+        }
+        fillDot(x: x + (pair ? 10 : 4), y: capsule.midY, radius: 1.6, color: color.withAlphaComponent(fade), context: context)
+    }
+
+    private func slash(at x: CGFloat, lean: CGFloat, alpha: CGFloat, color: NSColor, in capsule: NSRect, context: CGContext) {
+        let mid = capsule.midY
+        let rise: CGFloat = 6 * lean
+        strokeLine(
+            from: CGPoint(x: x, y: mid - rise),
+            to: CGPoint(x: x + 5, y: mid + rise),
+            width: 1.7,
+            color: color.withAlphaComponent(alpha),
+            context: context
+        )
+    }
+
+    private func drawEqualsCharge(in capsule: NSRect, context: CGContext, color: NSColor) {
+        let mid = capsule.midX
+        let width: CGFloat = 18
+        let left = mid - width / 2
+        let top = capsule.midY + 3
+        let bottom = capsule.midY - 3
+        let bar = color.withAlphaComponent(0.45)
+        strokeLine(from: CGPoint(x: left, y: top), to: CGPoint(x: left + width, y: top), width: 1.5, color: bar, context: context)
+        strokeLine(from: CGPoint(x: left, y: bottom), to: CGPoint(x: left + width, y: bottom), width: 1.5, color: bar, context: context)
+        let t = cycle(0.5)
+        let along = t < 0.5 ? t * 2 : (t - 0.5) * 2
+        let y = t < 0.5 ? top : bottom
+        fillDot(x: left + width * along, y: y, radius: 2, color: color, context: context)
+    }
+
+    private func drawAskSpark(in capsule: NSRect, context: CGContext, color: NSColor) {
+        let t = cycle(0.66)
+        let mid = capsule.midY
+        let x = capsule.midX
+        if t < 0.22 {
+            fillDot(x: x - 2, y: mid + 3, radius: 2, color: color, context: context)
+        } else if t < 0.44 {
+            fillDot(x: x + 2, y: mid + 3, radius: 2, color: color, context: context)
+        } else {
+            let hook = (t - 0.44) / 0.56
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: x + 2, y: mid + 3))
+            path.addQuadCurve(
+                to: CGPoint(x: x, y: mid - 4),
+                control: CGPoint(x: x + 7, y: mid - 1 + 4 * (1 - hook))
+            )
+            strokePath(path, width: 1.6, color: color.withAlphaComponent(0.5 + 0.5 * hook), context: context)
+            fillDot(x: x, y: mid - 4, radius: 1.5, color: color, context: context)
+        }
+    }
+
+    private func drawSwap(in capsule: NSRect, context: CGContext, color: NSColor) {
+        let t = cycle(0.6)
+        let eased = t * t * (3 - 2 * t)
+        let left = capsule.midX - 8
+        let right = capsule.midX + 8
+        let y = capsule.midY
+        fillDot(x: left + (right - left) * eased, y: y, radius: 2, color: color, context: context)
+        fillDot(x: right - (right - left) * eased, y: y, radius: 2, color: color.withAlphaComponent(0.7), context: context)
+    }
+
+    private func drawRicochet(in capsule: NSRect, context: CGContext, color: NSColor) {
+        let mid = capsule.midX
+        let y = capsule.midY
+        let bar = color.withAlphaComponent(0.4)
+        strokeLine(from: CGPoint(x: mid - 7, y: y - 5), to: CGPoint(x: mid - 7, y: y + 5), width: 1.6, color: bar, context: context)
+        strokeLine(from: CGPoint(x: mid + 7, y: y - 5), to: CGPoint(x: mid + 7, y: y + 5), width: 1.6, color: bar, context: context)
+        let t = cycle(0.36)
+        let bounce = t < 0.5 ? t * 2 : 1 - (t - 0.5) * 2
+        fillDot(x: mid - 7 + 14 * bounce, y: y, radius: 2, color: color, context: context)
+    }
+
+    private func drawChevron(in capsule: NSRect, context: CGContext, color: NSColor) {
+        let t = cycle(0.48)
+        let travel = min(1, t / 0.4)
+        let fade = t < 0.4 ? 1 : max(0, 1 - (t - 0.4) / 0.08)
+        let x = capsule.minX + 14 + (capsule.width - 32) * travel
+        let y = capsule.midY
+        let ink = color.withAlphaComponent(fade)
+        strokeLine(from: CGPoint(x: x, y: y - 4), to: CGPoint(x: x + 5, y: y), width: 1.7, color: ink, context: context)
+        strokeLine(from: CGPoint(x: x, y: y + 4), to: CGPoint(x: x + 5, y: y), width: 1.7, color: ink, context: context)
+        strokeLine(from: CGPoint(x: x + 6, y: y - 4), to: CGPoint(x: x + 11, y: y), width: 1.7, color: ink, context: context)
+        strokeLine(from: CGPoint(x: x + 6, y: y + 4), to: CGPoint(x: x + 11, y: y), width: 1.7, color: ink, context: context)
+    }
+
+    private func strokeLine(from start: CGPoint, to end: CGPoint, width: CGFloat, color: NSColor, context: CGContext) {
+        let path = CGMutablePath()
+        path.move(to: start)
+        path.addLine(to: end)
+        strokePath(path, width: width, color: color, context: context)
+    }
+
+    private func strokePath(_ path: CGPath, width: CGFloat, color: NSColor, context: CGContext) {
+        context.saveGState()
+        context.addPath(path)
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(width)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        context.strokePath()
+        context.restoreGState()
+    }
+
+    private func fillDot(x: CGFloat, y: CGFloat, radius: CGFloat, color: NSColor, context: CGContext) {
+        context.setFillColor(color.cgColor)
+        context.fillEllipse(in: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2))
     }
 
     private func drawReformed(in capsule: NSRect, context: CGContext) {

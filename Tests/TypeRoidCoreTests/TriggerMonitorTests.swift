@@ -66,32 +66,20 @@ import Testing
     #expect(modes == [.clean])
 }
 
-@Test func triggerMonitorFiresVoiceBriefForVoiceTrigger() {
+@Test func triggerMonitorDoesNotStartVoiceForCommasOrPeriods() {
     var modes: [CleanMode] = []
     let monitor = TriggerMonitor(
         triggerProvider: { "//" },
-        voiceTriggerProvider: { ",," },
         customCommandsProvider: { [] },
         onTrigger: { modes.append($0.mode) }
     )
 
     monitor.handleTypedCharacters(",,")
+    monitor.handleTypedCharacters("..")
+    monitor.handleTypedCharacters("...")
+    monitor.handleTypedCharacters("wait,, then...")
 
-    #expect(modes == [.smartBrevity])
-}
-
-@Test func triggerMonitorFiresVoiceTriggerAfterText() {
-    var modes: [CleanMode] = []
-    let monitor = TriggerMonitor(
-        triggerProvider: { "//" },
-        voiceTriggerProvider: { ",," },
-        customCommandsProvider: { [] },
-        onTrigger: { modes.append($0.mode) }
-    )
-
-    monitor.handleTypedCharacters("do not voice ,,")
-
-    #expect(modes == [.smartBrevity])
+    #expect(modes.isEmpty)
 }
 
 @Test func triggerMonitorFiresScreenTriggerAfterText() {

@@ -265,7 +265,6 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             queryTriggerProvider: { Settings.contextTrigger },
             translateTriggerProvider: { Settings.translateTrigger },
             mathTriggerProvider: { Settings.mathTrigger },
-            voiceTriggerProvider: { Settings.voiceTrigger },
             screenTriggerProvider: { Settings.screenTrigger },
             onFunctionKey: { [weak self] edge in
                 Task { @MainActor in
@@ -712,7 +711,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openReleasesPage() {
-        NSWorkspace.shared.open(URL(string: "https://github.com/typeroid/typeroid/releases")!)
+        NSWorkspace.shared.open(URL(string: "https://github.com/chadwittman/typeroid/releases/latest")!)
     }
 
     @objc private func toggleWebSearch(_ sender: NSMenuItem) {
@@ -949,10 +948,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         Fn dictation: hold fn, speak, release. Ums and ahs come out. The rest of what you said pastes at the cursor.
         Double-tap fn for hands-free. The next fn press stops and pastes.
         Escape cancels. A single short tap does not record.
-
-        Voice: type ,, anywhere typeROID is enabled, then talk for up to a few minutes.
-        typeROID transcribes locally, drops ums and ahs, and pastes what you said. It does not summarize.
-        // never starts voice.
+        Typing .. or ,, does not start the microphone. // never starts voice.
 
         ─────────────────────────────────────────
         ?? — Ask AI anything. Answer replaces what you typed.
@@ -1472,6 +1468,10 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     }
 
     private func handlePill(_ pick: JuicePick) {
+        if pick == .quit {
+            NSApp.terminate(nil)
+            return
+        }
         if pick == .talk {
             if fnSession != nil {
                 fnSession?.control.stop()
@@ -1485,7 +1485,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         let label: String
         let verb: String
         switch pick {
-        case .talk:
+        case .talk, .quit:
             return
         case .fix:
             mode = .clean; label = "//"; verb = "fixing"
@@ -1977,7 +1977,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
             if p == .openai || p == .google { return "on (\(p.displayName))" }
             return "on but \(p.displayName) doesn't support it — switch to OpenAI or Google"
         }()
-        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nVoice trigger: \(Settings.voiceTrigger)\nScreen trigger: \(Settings.screenTrigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\>>): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
+        return "Monitor: \(monitorStatus)\nKeys seen: \(keypressCount)\nLast keys: \(lastTriggerDebug)\nLast rewrite: \(lastRewriteStatus)\nCapture: \(lastCapturedSummary)\nClean trigger: \(Settings.trigger)\nScreen trigger: \(Settings.screenTrigger)\nRewrite trigger: \(Settings.rewriteTrigger)\nProvider: \(Settings.provider.displayName)\nModel (//;;==\\\\>>): \(Settings.model)\nModel (??): \(Settings.provider.queryModel)\nWeb search (??): \(webSearchStatus)\nLanguage: \(Settings.language)\nLast app: \(lastTypingAppName ?? "unknown")\nAccessibility: \(AXIsProcessTrusted() ? "yes" : "no")"
     }
 
     private func requestVoicePermissionsAndOpenSettingsIfNeeded() async {
@@ -2235,7 +2235,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = try await present(step: .init(
                     title: voiceOK ? "Voice is ready." : "Voice is still off.",
                     body: voiceOK
-                        ? "Hold fn, talk, release. Ums come out. Sentences start with a capital, and so does I. The words stay yours.\n\nDouble-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A short tap does not record.\n\n,, is the same dictation, typed. // never starts voice."
+                        ? "Hold fn, talk, release. Ums come out. Sentences start with a capital, and so does I. The words stay yours.\n\nDouble-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A short tap does not record.\n\nTyping does not start the microphone. // never starts voice."
                         : "\(missing) still needs a toggle.\n\nTurn typeROID on, then check again.",
                     buttonTitles: voiceOK ? ["Continue"] : ["Check again", "Open Settings", "Skip"],
                     kicker: "07  Voice check",
@@ -2266,7 +2266,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                     body: """
                     This step picks the compound for the typed stack. // ?? ;; == >> \\\\ || use it.
 
-                    fn and ,, do not. They transcribe on this Mac.
+                    fn does not. It transcribes on this Mac.
 
                     OpenAI is fast and cheap. Claude is the premium dose. Gemini and Groq have free tiers. Ollama stays on the machine, no key.
                     """,
@@ -2477,8 +2477,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 let r = try await present(step: .init(
                     title: screenOK ? "Screen context is on." : "Screen context is optional.",
                     body: screenOK
-                        ? "Type a prompt, then >>. typeROID sends the prompt and a full-screen shot. //, fn, and ,, never take a screenshot."
-                        : "This step is only for >>.\n\nType a prompt, then >>. typeROID sends that prompt plus a full-screen screenshot. //, fn, and ,, never take a screenshot.\n\nSkip if you do not want Screen Recording.",
+                        ? "Type a prompt, then >>. typeROID sends the prompt and a full-screen shot. // and fn never take a screenshot."
+                        : "This step is only for >>.\n\nType a prompt, then >>. typeROID sends that prompt plus a full-screen screenshot. // and fn never take a screenshot.\n\nSkip if you do not want Screen Recording.",
                     buttonTitles: screenOK ? ["Continue"] : ["Set Up Screen Context", "Skip"],
                     kicker: "13  Screen",
                     showBack: true

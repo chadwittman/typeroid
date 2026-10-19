@@ -259,8 +259,8 @@ final class OnboardingWindow {
             Hold fn, talk, release. Ums come out. The words stay yours.
             Double-tap fn for hands-free. The next fn press stops and pastes. Escape cancels. A short tap does not record.
 
-            ,,   same dictation. Talk, then pause.
             //   fix a draft. Never starts voice.
+            .. and ,, do not start the microphone.
             >>   prompt plus the screen.
             ??   ask.
             ;;   translate.

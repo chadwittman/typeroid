@@ -1,12 +1,25 @@
 import Foundation
 
+/// Which tool is working while the pill zaps.
+public enum JuiceZap: Equatable, Sendable {
+    case voice
+    case fix
+    case math
+    case ask
+    case translate
+    case rephrase
+    case screen
+    case thread
+    case charge
+}
+
 /// The line on the pill above the Dock. Short, on purpose.
 public enum JuiceCue: Equatable, Sendable {
     case rest
     case benched
     case juicing
     case openSet
-    case cooking
+    case cooking(JuiceZap)
     case gains
     case spit
     case hint
@@ -49,6 +62,21 @@ public enum JuiceCue: Equatable, Sendable {
             || text.contains("ready") {
             return .gains
         }
-        return .cooking
+        return .cooking(zap(for: text))
+    }
+
+    /// The symbol at the front of a status line picks the zap.
+    static func zap(for text: String) -> JuiceZap {
+        if text.hasPrefix("fn") || text.contains("transcrib") || text.contains("cooking") {
+            return .voice
+        }
+        if text.hasPrefix("//") { return .fix }
+        if text.hasPrefix("==") { return .math }
+        if text.hasPrefix("??") { return .ask }
+        if text.hasPrefix(";;") { return .translate }
+        if text.hasPrefix("||") { return .rephrase }
+        if text.hasPrefix(">>") { return .screen }
+        if text.hasPrefix("\\") { return .thread }
+        return .charge
     }
 }

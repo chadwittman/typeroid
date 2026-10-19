@@ -103,7 +103,7 @@ final class WhisperDictation {
         let started = Date()
         var lastVoiceTime = Date()
         var heardVoice = false
-        let poll: Duration = control == nil ? .milliseconds(120) : .milliseconds(50)
+        let poll: Duration = .milliseconds(40)
 
         while !Task.isCancelled {
             try await Task.sleep(for: poll)
@@ -111,7 +111,11 @@ final class WhisperDictation {
                 throw CancellationError()
             }
             recorder.updateMeters()
-            if recorder.averagePower(forChannel: 0) > -42 {
+            let average = recorder.averagePower(forChannel: 0)
+            let peak = recorder.peakPower(forChannel: 0)
+            MicWave.shared.push(linear: Self.audibleLinear(fromDecibels: average))
+            MicWave.shared.push(linear: Self.audibleLinear(fromDecibels: peak))
+            if average > -42 {
                 heardVoice = true
                 lastVoiceTime = Date()
             }
@@ -129,6 +133,12 @@ final class WhisperDictation {
         guard heardVoice else {
             throw WhisperDictationError.noSpeech
         }
+    }
+
+    /// Recorder meters are decibels. 0 is full scale. Quiet rooms sit near -160.
+    private static func audibleLinear(fromDecibels db: Float) -> Float {
+        guard db.isFinite, db > -55 else { return 0 }
+        return min(1, pow(10, db / 20))
     }
 
     private func runWhisper(runtimeURL: URL, modelURL: URL, audioURL: URL, outputBaseURL: URL) throws -> String {
