@@ -2,15 +2,26 @@ import Foundation
 import Testing
 @testable import TypeRoidCore
 
-@Test func arrowFlagIsNotTheFnKey() {
-    #expect(FunctionFlag.flagsChangedIsFn(keyCode: 0x7E) == false)
-    #expect(FunctionFlag.flagsChangedIsFn(keyCode: 0x7B) == false)
-    #expect(FunctionFlag.flagsChangedIsFn(keyCode: FunctionFlag.globeKeyCode) == true)
+@Test func upArrowCannotStartTheMicrophone() {
+    var filter = GlobeKeyFilter()
+    let up = Int64(0x7E)
 
-    #expect(FunctionFlag.pollIsFnDown(globeDown: false, functionFlag: true, otherFunctionKeyDown: true) == false)
-    #expect(FunctionFlag.pollIsFnDown(globeDown: true, functionFlag: false, otherFunctionKeyDown: false) == true)
-    #expect(FunctionFlag.pollIsFnDown(globeDown: false, functionFlag: true, otherFunctionKeyDown: false) == true)
-    #expect(FunctionFlag.keysThatSetFunctionFlag.contains(0x7E))
+    #expect(filter.poll(globeDown: true, otherFunctionKeyDown: false, at: 1) == .none)
+    #expect(filter.poll(globeDown: true, otherFunctionKeyDown: true, at: 1.01) == .void)
+    #expect(filter.key(code: up, isDown: true, at: 2) == .void)
+    #expect(filter.key(code: FunctionFlag.globeKeyCode, isDown: true, at: 2.1) == .void)
+    #expect(filter.poll(globeDown: true, otherFunctionKeyDown: false, at: 2.2) == .none)
+
+    #expect(filter.key(code: FunctionFlag.globeKeyCode, isDown: true, at: 3) == .globeDown)
+    #expect(filter.poll(globeDown: true, otherFunctionKeyDown: false, at: 3.2) == .none)
+    #expect(filter.poll(globeDown: false, otherFunctionKeyDown: false, at: 3.4) == .globeUp)
+
+    var gesture = FunctionDictationGesture()
+    _ = gesture.fnDown(at: 4)
+    _ = gesture.fnUp(at: 4.05)
+    #expect(gesture.fnDown(at: 4.2) == [.begin(.handsFree)])
+    #expect(gesture.voidRecentPress(at: 4.25) == [.discard])
+    #expect(gesture.phase == .idle)
 }
 
 @Test func functionHoldStartsPushToTalkAndReleaseEnds() {

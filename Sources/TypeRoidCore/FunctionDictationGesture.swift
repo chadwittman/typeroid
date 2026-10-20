@@ -82,6 +82,24 @@ public struct FunctionDictationGesture: Sendable {
         }
     }
 
+    /// An arrow key, page key, or F key arrived. Drop a press those keys just
+    /// faked, including a hands-free that their taps just started.
+    public mutating func voidRecentPress(at time: TimeInterval) -> [FunctionDictationAction] {
+        switch phase {
+        case .pressed, .armingDoubleTap, .handsFreeHeld:
+            phase = .idle
+            return [.discard]
+        case .pushToTalk(let downAt) where time - downAt <= tapCeiling:
+            phase = .idle
+            return [.discard]
+        case .handsFree(let startedAt) where time - startedAt <= doubleTapGap + tapCeiling:
+            phase = .idle
+            return [.discard]
+        case .idle, .pushToTalk, .handsFree:
+            return []
+        }
+    }
+
     /// A non-fn key arrived while fn was down. Chords such as fn+F1 must not dictate.
     public mutating func otherKey(at time: TimeInterval) -> [FunctionDictationAction] {
         switch phase {
@@ -118,29 +136,75 @@ public struct FunctionDictationGesture: Sendable {
     }
 }
 
-/// macOS sets the function modifier for more than the fn key. Arrow keys,
-/// page keys, forward delete, and the F keys all set it. Only the globe key
-/// is fn. Two arrow taps were starting hands-free because each one looked
-/// like an fn press.
+/// macOS reports the globe key as down for more than the globe key.
+/// `keyState(0x3F)` and `maskSecondaryFn` are both set by the arrow keys,
+/// page keys, forward delete, and the F keys. Up was still starting the
+/// microphone through that shared state. Only a key event whose code is
+/// 0x3F is the globe key.
 public enum FunctionFlag {
     public static let globeKeyCode: Int64 = 0x3F
 
-    /// Key codes that set `maskSecondaryFn` while they are down.
-    public static let keysThatSetFunctionFlag: Set<Int64> = [
+    /// Keys that make the globe key's state and the function modifier look down.
+    public static let nonGlobeFunctionKeyCodes: Set<Int64> = [
         0x72, 0x73, 0x74, 0x75, 0x77, 0x79,
         0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x67, 0x6D, 0x6F, 0x76, 0x78, 0x7A,
         0x7B, 0x7C, 0x7D, 0x7E,
     ]
+}
 
-    public static func flagsChangedIsFn(keyCode: Int64) -> Bool {
-        keyCode == globeKeyCode
+public enum GlobeKeyDecision: Sendable, Equatable {
+    case none
+    case globeDown
+    case globeUp
+    case void
+}
+
+/// Decides whether a keyboard event is the globe key. The poll cannot start
+/// a press: Up sets the same key state the poll used to trust.
+public struct GlobeKeyFilter: Sendable {
+    public static let settle: TimeInterval = 0.35
+
+    private var blockUntil: TimeInterval = -.infinity
+    private var down = false
+
+    public init() {}
+
+    public mutating func key(code: Int64, isDown: Bool, at time: TimeInterval) -> GlobeKeyDecision {
+        if FunctionFlag.nonGlobeFunctionKeyCodes.contains(code) {
+            blockUntil = time + Self.settle
+            down = false
+            return .void
+        }
+        guard code == FunctionFlag.globeKeyCode else { return .none }
+        if time < blockUntil {
+            down = false
+            return .void
+        }
+        guard isDown != down else { return .none }
+        down = isDown
+        return isDown ? .globeDown : .globeUp
     }
 
-    /// Prefer the globe key itself. The modifier bit is only a fallback, and
-    /// it does not count while some other function key is held.
-    public static func pollIsFnDown(globeDown: Bool, functionFlag: Bool, otherFunctionKeyDown: Bool) -> Bool {
-        if globeDown { return true }
-        return functionFlag && !otherFunctionKeyDown
+    public mutating func poll(globeDown: Bool, otherFunctionKeyDown: Bool, at time: TimeInterval) -> GlobeKeyDecision {
+        if otherFunctionKeyDown {
+            blockUntil = time + Self.settle
+            down = false
+            return .void
+        }
+        if time < blockUntil {
+            if down {
+                down = false
+                return .void
+            }
+            return .none
+        }
+        // A missed key-up can end a press the globe key already started.
+        // This never begins one.
+        if down && !globeDown {
+            down = false
+            return .globeUp
+        }
+        return .none
     }
 }
 

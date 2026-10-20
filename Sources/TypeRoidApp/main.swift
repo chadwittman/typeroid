@@ -119,6 +119,7 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
     private var didOpenInputMonitoring = false
     private var functionFlagDown = false
     private var functionFlagTimer: Timer?
+    private var globeFilter = GlobeKeyFilter()
 
     private var appIcon: NSImage? {
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "icns") {
@@ -229,8 +230,8 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// The globe key often never arrives on the event tap. The fn modifier
-    /// flag still changes, so poll it. The gesture ignores a repeated edge.
+    /// The poll can end a globe press whose key-up was missed. It cannot
+    /// start one. Up sets the same key state as the globe key.
     private func startFunctionFlagPoll() {
         guard functionFlagTimer == nil else { return }
         let timer = Timer(timeInterval: 0.01, repeats: true) { [weak self] _ in
@@ -242,19 +243,36 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
 
     private func pollFunctionFlag() {
         let globeDown = CGEventSource.keyState(.hidSystemState, key: CGKeyCode(FunctionFlag.globeKeyCode))
-        let functionFlag = CGEventSource.flagsState(.hidSystemState).contains(.maskSecondaryFn)
-        let otherFunctionKeyDown = FunctionFlag.keysThatSetFunctionFlag.contains { code in
+        let otherFunctionKeyDown = FunctionFlag.nonGlobeFunctionKeyCodes.contains { code in
             CGEventSource.keyState(.hidSystemState, key: CGKeyCode(code))
         }
-        let down = FunctionFlag.pollIsFnDown(
-            globeDown: globeDown,
-            functionFlag: functionFlag,
-            otherFunctionKeyDown: otherFunctionKeyDown
-        )
-        guard down != functionFlagDown else { return }
-        functionFlagDown = down
         let time = ProcessInfo.processInfo.systemUptime
-        ingestFunction(down: down, at: time)
+        applyGlobeDecision(globeFilter.poll(
+            globeDown: globeDown,
+            otherFunctionKeyDown: otherFunctionKeyDown,
+            at: time
+        ), at: time)
+    }
+
+    private func handlePhysicalKey(code: Int64, down: Bool, at time: TimeInterval) {
+        applyGlobeDecision(globeFilter.key(code: code, isDown: down, at: time), at: time)
+    }
+
+    private func applyGlobeDecision(_ decision: GlobeKeyDecision, at time: TimeInterval) {
+        switch decision {
+        case .none:
+            break
+        case .globeDown:
+            functionFlagDown = true
+            ingestFunction(down: true, at: time)
+        case .globeUp:
+            functionFlagDown = false
+            ingestFunction(down: false, at: time)
+        case .void:
+            functionFlagDown = false
+            fnSignals = FunctionKeySignals()
+            applyFunctionActions(fnGesture.voidRecentPress(at: time))
+        }
     }
 
     /// Poll and the event tap both report fn. Keep one edge, and drop a copy
@@ -279,16 +297,19 @@ final class TypeRoidApp: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     guard let self else { return }
                     switch edge {
-                    case .down(let time):
-                        self.ingestFunction(down: true, at: time)
-                    case .up(let time):
-                        self.ingestFunction(down: false, at: time)
+                    case .down, .up:
+                        break
                     case .otherKey(let time):
                         guard !self.fnSignals.isStale(time) else { return }
                         self.handleFunctionKey(edge)
                     case .escape:
                         self.handleFunctionKey(edge)
                     }
+                }
+            },
+            onPhysicalKey: { [weak self] code, down, time in
+                Task { @MainActor in
+                    self?.handlePhysicalKey(code: code, down: down, at: time)
                 }
             },
             shouldSwallowGlobe: { [weak self] in self?.isEnabled ?? false },

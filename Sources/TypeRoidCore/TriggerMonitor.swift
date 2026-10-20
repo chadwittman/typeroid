@@ -18,6 +18,7 @@ public final class TriggerMonitor {
     private let screenTriggerProvider: () -> String     // >> (prompt with screenshot)
     private let customCommandsProvider: () -> [String]  // available ..commands
     private let onFunctionKey: (FunctionKeyEdge) -> Void
+    private let onPhysicalKey: (Int64, Bool, TimeInterval) -> Void
     private let shouldSwallowGlobe: () -> Bool
     private let shouldSwallowEscape: () -> Bool
     private let onDebugEvent: (TriggerMonitorDebugEvent) -> Void
@@ -44,6 +45,7 @@ public final class TriggerMonitor {
         screenTriggerProvider: @escaping () -> String = { Settings.screenTrigger },
         customCommandsProvider: @escaping () -> [String] = { TextCleaner.availableCommands() },
         onFunctionKey: @escaping (FunctionKeyEdge) -> Void = { _ in },
+        onPhysicalKey: @escaping (Int64, Bool, TimeInterval) -> Void = { _, _, _ in },
         shouldSwallowGlobe: @escaping () -> Bool = { false },
         shouldSwallowEscape: @escaping () -> Bool = { false },
         onDebugEvent: @escaping (TriggerMonitorDebugEvent) -> Void = { _ in },
@@ -58,6 +60,7 @@ public final class TriggerMonitor {
         self.screenTriggerProvider = screenTriggerProvider
         self.customCommandsProvider = customCommandsProvider
         self.onFunctionKey = onFunctionKey
+        self.onPhysicalKey = onPhysicalKey
         self.shouldSwallowGlobe = shouldSwallowGlobe
         self.shouldSwallowEscape = shouldSwallowEscape
         self.onDebugEvent = onDebugEvent
@@ -155,23 +158,25 @@ public final class TriggerMonitor {
             return Unmanaged.passUnretained(event)
         }
 
-        if type == .flagsChanged {
+        if type == .keyDown || type == .keyUp || type == .flagsChanged {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            // Arrow keys and the other function keys set this flag too.
-            // Their flagsChanged events are not the fn key.
-            if FunctionFlag.flagsChangedIsFn(keyCode: keyCode) {
-                noteFunction(down: event.flags.contains(.maskSecondaryFn))
+            let down = type == .keyDown || (type == .flagsChanged && event.flags.contains(.maskSecondaryFn))
+            if FunctionFlag.nonGlobeFunctionKeyCodes.contains(keyCode) {
+                functionIsDown = false
+            } else if keyCode == FunctionFlag.globeKeyCode {
+                functionIsDown = down
             }
-            return Unmanaged.passUnretained(event)
-        }
-
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-        if type == .keyDown || type == .keyUp, keyCode == FunctionFlag.globeKeyCode {
-            noteFunction(down: type == .keyDown)
-            return shouldSwallowGlobe() ? nil : Unmanaged.passUnretained(event)
+            onPhysicalKey(keyCode, down, Self.monotonicNow())
+            if type == .flagsChanged {
+                return Unmanaged.passUnretained(event)
+            }
+            if keyCode == FunctionFlag.globeKeyCode {
+                return shouldSwallowGlobe() ? nil : Unmanaged.passUnretained(event)
+            }
         }
 
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
 
         if keyCode == Self.escapeKeyCode, shouldSwallowEscape() {
             onFunctionKey(.escape)
@@ -182,13 +187,6 @@ public final class TriggerMonitor {
         }
         handle(event)
         return Unmanaged.passUnretained(event)
-    }
-
-    private func noteFunction(down: Bool) {
-        guard down != functionIsDown else { return }
-        functionIsDown = down
-        let time = Self.monotonicNow()
-        onFunctionKey(down ? .down(time) : .up(time))
     }
 
     private static func monotonicNow() -> TimeInterval {
